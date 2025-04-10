@@ -9,7 +9,7 @@ const char* ssid = "B10509_2.4G";
 const char* password = "509509509";
 
 // --- Cấu hình Server ---
-const char* websockets_server_host = "192.168.1.6"; 
+const char* websockets_server_host = "192.168.1.14"; 
 const uint16_t websockets_server_port = 8080;
 const char* websockets_path = "/";
 
@@ -25,6 +25,8 @@ const char* websockets_path = "/";
 
 // --- Cấu hình Ghi âm ---
 #define RECORD_DURATION_MS 5000 // 5 giây
+
+#define LED_RECORD 17
 
 // --- Biến Global ---
 WebSocketsClient webSocket;
@@ -114,6 +116,7 @@ void recordAndSendTask(void * parameter) {
   }
   Serial.println("Recording finished.");
   isRecording = false;
+  digitalWrite(LED_RECORD, LOW);
   free(i2s_read_buffer);
   delay(500);
   webSocket.sendTXT("END_OF_STREAM");
@@ -125,6 +128,10 @@ void recordAndSendTask(void * parameter) {
 // --- Setup ---
 void setup() {
   Serial.begin(115200);
+
+  pinMode(LED_RECORD, OUTPUT);
+  digitalWrite(LED_RECORD, LOW);
+
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) delay(500);
   Serial.println("WiFi connected.");
@@ -142,6 +149,7 @@ void loop() {
     if (c == 's' && !isRecording && webSocket.isConnected()) {
       Serial.println("Start recording!");
       isRecording = true;
+      digitalWrite(LED_RECORD, HIGH);
       xTaskCreatePinnedToCore(recordAndSendTask, "RecordSendTask", 8192, NULL, 1, &recordTaskHandle, 1);
     }
   }
