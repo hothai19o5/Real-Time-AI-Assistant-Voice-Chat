@@ -124,8 +124,27 @@ wss.on('connection', (ws) => {
                 const tmpInputFile = tmp.tmpNameSync({ postfix: '.wav' });
                 const tmpOutputFile = tmp.tmpNameSync({ postfix: '.wav' });
 
-                // Ghi file WAV từ buffer
-                fs.writeFileSync(tmpInputFile, fullAudioBuffer);
+                // Tạo WAV header cho file tạm đầu vào
+                const tmpInputWavHeaderBuffer = createWavHeader(fullAudioBuffer.length, {
+                    numChannels: 1,
+                    sampleRate: VOSK_SAMPLE_RATE,
+                    bitsPerSample: 16
+                });
+
+                // Ghi file WAV đầy đủ (header + data) vào file tạm
+                const tmpInputWavData = Buffer.concat([
+                    tmpInputWavHeaderBuffer,
+                    fullAudioBuffer
+                ]);
+
+                console.log(`Ghi file WAV tạm với header (${tmpInputWavHeaderBuffer.length} bytes) + data (${fullAudioBuffer.length} bytes)`);
+                fs.writeFileSync(tmpInputFile, tmpInputWavData);
+                console.log(`Đã ghi file tạm thành công: ${tmpInputFile}`);
+
+                // Debug: Lưu thêm file tạm để kiểm tra
+                const debugInputFile = `debug_input_${Date.now()}.wav`;
+                fs.writeFileSync(debugInputFile, tmpInputWavData);
+                console.log(`Đã lưu file debug input: ${debugInputFile}`);
 
                 // Xử lý bằng sox: noise reduction, resample, normalize
                 const { exec, execSync } = require('child_process');
