@@ -51,21 +51,21 @@ function cleanMarkdownFormatting(text) {
     text = text.replace(/\*/g, '');    // Remove *italic*
     text = text.replace(/\_\_/g, '');  // Remove __bold__
     text = text.replace(/\_/g, '');    // Remove _italic_
-    
+
     // Remove code formatting
     text = text.replace(/```[\s\S]*?```/g, ''); // Remove code blocks
     text = text.replace(/`([^`]+)`/g, '$1');    // Remove inline code
-    
+
     // Replace bullet points with proper spacing
     text = text.replace(/^\s*[\*\-]\s+/gm, ', ');
-    
+
     // Replace numbered lists
     text = text.replace(/^\s*\d+\.\s+/gm, ', ');
-    
+
     // Remove excess whitespace
     text = text.replace(/\n+/g, ' ');
     text = text.replace(/\s+/g, ' ');
-    
+
     return text.trim();
 }
 
@@ -75,13 +75,13 @@ function cleanMarkdownFormatting(text) {
 function chunkAudioData(audioBuffer, chunkSize = 1024) {
     const chunks = [];
     let offset = 0;
-    
+
     while (offset < audioBuffer.length) {
         const end = Math.min(offset + chunkSize, audioBuffer.length);
         chunks.push(audioBuffer.slice(offset, end));
         offset = end;
     }
-    
+
     return chunks;
 }
 
@@ -169,7 +169,6 @@ wss.on('connection', (ws) => {
 
                 // Tạo file tạm WAV đầu vào
                 const tmpInputFile = tmp.tmpNameSync({ postfix: '.wav' });
-                const tmpOutputFile = tmp.tmpNameSync({ postfix: '.wav' });
 
                 // Tạo WAV header cho file tạm đầu vào
                 const tmpInputWavHeaderBuffer = createWavHeader(fullAudioBuffer.length, {
@@ -188,51 +187,11 @@ wss.on('connection', (ws) => {
                 fs.writeFileSync(tmpInputFile, tmpInputWavData);
                 console.log(`Đã ghi file tạm thành công: ${tmpInputFile}`);
 
-                // Debug: Lưu thêm file tạm để kiểm tra
-                const debugInputFile = `debug_input_${Date.now()}.wav`;
-                fs.writeFileSync(debugInputFile, tmpInputWavData);
-                console.log(`Đã lưu file debug input: ${debugInputFile}`);
-
-                // Xử lý bằng sox: noise reduction, resample, normalize
-                const { exec, execSync } = require('child_process');
-
-                // Phương án thay thế nếu không có SoX
-                let processedBuffer;
-
                 try {
-                    // Kiểm tra xem SoX có được cài đặt không
-                    try {
-                        execSync('sox --version', { stdio: 'ignore' });
-                        // SoX được cài đặt, sử dụng để xử lý
-                        const soxCommand = `sox ${tmpInputFile} -r 16000 -b 16 -c 1 -e signed-integer -L ${tmpOutputFile}`;
-                        execSync(soxCommand);
-                        processedBuffer = fs.readFileSync(tmpOutputFile);
-                        console.log("Xử lý âm thanh thành công với SoX");
-
-                        // Lưu file âm thanh đã xử lý để so sánh
-                        const processedWavHeaderBuffer = createWavHeader(processedBuffer.length, {
-                            numChannels: 1,
-                            sampleRate: VOSK_SAMPLE_RATE,
-                            bitsPerSample: 16
-                        });
-
-                        const processedWavData = Buffer.concat([
-                            processedWavHeaderBuffer,
-                            processedBuffer
-                        ]);
-
-                        const processedOutputFile = `processed_audio_${Date.now()}.wav`;
-                        fs.writeFileSync(processedOutputFile, processedWavData);
-                        console.log(`Lưu âm thanh đã xử lý vào: ${processedOutputFile}`);
-                    } catch (e) {
-                        console.error("Lỗi khi xử lý với SoX:", e.message);
-                        console.log("SoX không có sẵn. Sử dụng âm thanh chưa xử lý...");
-                        processedBuffer = fullAudioBuffer;
-                    }
 
                     // Tiếp tục với nhận dạng
                     recognizer.reset();
-                    recognizer.acceptWaveform(processedBuffer);
+                    recognizer.acceptWaveform(fullAudioBuffer);
                     const finalResult = recognizer.finalResult();
                     const recognizedText = finalResult.text;
                     console.log("Vosk Final Result:", finalResult);
@@ -254,10 +213,10 @@ wss.on('connection', (ws) => {
 
                             if (ws.readyState === WebSocket.OPEN) {
                                 ws.send(geminiText);
-                                
+
                                 // Send a signal to ESP32 that audio stream is starting
                                 ws.send("AUDIO_STREAM_START");
-                                
+
                                 // Thay đổi phần xử lý dữ liệu PCM từ TTS
 
                                 // Get raw PCM from Orca TTS
@@ -265,34 +224,34 @@ wss.on('connection', (ws) => {
 
                                 if (pcm !== null) {
                                     // Thêm đoạn này để debug dữ liệu PCM gốc
-                                    console.log(`Dữ liệu PCM gốc: ${pcm.length} mẫu, từ ${pcm[0]} đến ${pcm[pcm.length-1]}`);
-                                    
+                                    console.log(`Dữ liệu PCM gốc: ${pcm.length} mẫu, từ ${pcm[0]} đến ${pcm[pcm.length - 1]}`);
+
                                     // Chuyển đổi Int16Array thành Buffer đúng cách
                                     const pcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-                                    
+
                                     // Convert PCM to WAV format - đảm bảo header đúng
                                     const wavHeaderBuffer = createWavHeader(pcmBuffer.length, {
                                         numChannels: 1,
-                                        sampleRate: 16000, 
+                                        sampleRate: 16000,
                                         bitsPerSample: 16
                                     });
-                                    
+
                                     // Concatenate header and PCM data
                                     const wavData = Buffer.concat([wavHeaderBuffer, pcmBuffer]);
-                                    
+
                                     // Debug: in thông tin chi tiết về file WAV
                                     console.log(`WAV header: ${wavHeaderBuffer.length} bytes`);
                                     console.log(`WAV data: ${pcmBuffer.length} bytes`);
                                     console.log(`Tổng kích thước WAV: ${wavData.length} bytes`);
-                                    
+
                                     // Lưu file để debug
                                     const debugOutputFile = `tts_output_${Date.now()}.wav`;
                                     fs.writeFileSync(debugOutputFile, wavData);
-                                    
+
                                     // Chia thành chunks nhỏ hơn để dễ xử lý
-                                    const audioChunks = chunkAudioData(wavData, 512); // Giảm kích thước chunk xuống 512 bytes
+                                    const audioChunks = chunkAudioData(wavData, 2048);
                                     console.log(`Đã chia âm thanh thành ${audioChunks.length} phần`);
-                                    
+
                                     // Gửi từng chunk với khoảng thời gian nhỏ giữa các lần gửi
                                     const sendChunks = async () => {
                                         // Gửi chunk đầu tiên có header WAV
@@ -301,26 +260,26 @@ wss.on('connection', (ws) => {
                                                 console.log("Mất kết nối WebSocket trong quá trình gửi!");
                                                 break;
                                             }
-                                            
+
                                             ws.send(audioChunks[i]);
-                                            
+
                                             // Đợi một khoảng thời gian nhỏ giữa các chunk để tránh tắc nghẽn
                                             await new Promise(resolve => setTimeout(resolve, 10));
                                         }
-                                        
+
                                         // Báo hiệu kết thúc luồng âm thanh
                                         if (ws.readyState === WebSocket.OPEN) {
                                             ws.send("AUDIO_STREAM_END");
                                             console.log("Đã gửi xong dữ liệu âm thanh.");
                                         }
                                     };
-                                    
+
                                     // Bắt đầu quá trình gửi
                                     sendChunks();
                                 } else {
                                     console.log("Orca TTS trả về dữ liệu âm thanh null");
                                 }
-                                
+
                                 console.log("Sent Gemini response and audio back to client.");
                             } else {
                                 console.log("Client disconnected before sending Gemini response.");
@@ -334,7 +293,6 @@ wss.on('connection', (ws) => {
                             // Xóa tệp tạm sau khi xử lý xong
                             try {
                                 fs.unlinkSync(tmpInputFile);
-                                fs.unlinkSync(tmpOutputFile);
                                 console.log("Temporary files deleted successfully");
                             } catch (err) {
                                 console.error("Error deleting temporary files:", err);
@@ -379,7 +337,7 @@ wss.on('connection', (ws) => {
         }
         orcaStream.close(); // Đóng stream
         orca.release(); // Giải phóng tài nguyên Orca
-        
+
         console.log('Client disconnected');
         // Giải phóng tài nguyên của recognizer khi client ngắt kết nối
         recognizer.free();
