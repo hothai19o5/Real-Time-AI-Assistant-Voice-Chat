@@ -20,6 +20,7 @@ const char* websockets_path = "/";
 #define I2S_SD_IN 32
 #define I2S_SD_OUT 25  // !!! CHÂN MỚI: Chân Serial Data OUT (Tới MAX98357A) !!! - Chọn chân phù hợp
 #define I2S_SCK 14
+#define SPEAKER_SD_PIN 26 // Chân Shutdown cho loa MAX98357A
 #define I2S_PORT I2S_NUM_0
 #define I2S_SAMPLE_RATE (16000)
 #define I2S_BITS_PER_SAMPLE_RX I2S_BITS_PER_SAMPLE_32BIT
@@ -39,6 +40,7 @@ const char* websockets_path = "/";
 
 #define LED_RECORD 17
 #define LED_PLAY 16  // !!! LED MỚI: LED báo đang phát (Tùy chọn) !!! - Chọn chân phù hợp
+#define MIC_GAIN_FACTOR 4.0  // Hệ số khuếch đại microphone, điều chỉnh theo nhu cầu
 
 // *** SỬA 1: Di chuyển định nghĩa AudioChunk lên đây ***
 // Định nghĩa cấu trúc để gửi vào Queue Playback
@@ -234,6 +236,10 @@ esp_err_t i2s_uninstall() {
 
 // --- Hàm cấu hình I2S cho microphone (32-bit) ---
 esp_err_t i2s_install_mic() {
+
+  // Tắt loa khi chuyển sang chế độ microphone
+  digitalWrite(SPEAKER_SD_PIN, LOW);  // Đặt chân SD ở mức LOW để tắt loa
+
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
     .sample_rate = I2S_SAMPLE_RATE,
@@ -280,6 +286,10 @@ esp_err_t i2s_install_mic() {
 
 // --- Hàm cấu hình I2S cho loa (16-bit) ---
 esp_err_t i2s_install_speaker() {
+
+  // Bật loa khi chuyển sang chế độ speaker
+  digitalWrite(SPEAKER_SD_PIN, HIGH);  // Đặt chân SD ở mức HIGH để bật loa
+  
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
     .sample_rate = I2S_SAMPLE_RATE,
@@ -424,8 +434,19 @@ void recordAndSendTask(void* parameter) {
       int samples_read = bytes_read / 4;
       bytes_to_send = samples_read * 2;
 
+      // Áp dụng khuếch đại khi chuyển đổi từ 32-bit sang 16-bit
       for (int i = 0; i < samples_read; i++) {
-        pcm_send_buffer[i] = (int16_t)(i2s_read_buffer[i] >> 16);
+        // Lấy giá trị 16-bit (MSB từ mẫu 32-bit)
+        int32_t sample = i2s_read_buffer[i] >> 16;
+        
+        // Áp dụng khuếch đại với bảo vệ chống clipping
+        sample = (int32_t)(sample * MIC_GAIN_FACTOR);
+        
+        // Giới hạn giá trị trong phạm vi 16-bit signed
+        if (sample > 32767) sample = 32767;
+        if (sample < -32768) sample = -32768;
+        
+        pcm_send_buffer[i] = (int16_t)sample;
       }
 
       if (webSocket.isConnected()) {
@@ -482,6 +503,7 @@ void playbackTask(void* parameter) {
             continue;
           }
           speaker_mode_active = true;
+          Serial.println("Speaker mode activated");
         }
 
         // --- GIẢM ÂM LƯỢNG 50% ---
@@ -491,7 +513,7 @@ void playbackTask(void* parameter) {
         
         // Điều chỉnh biên độ của mỗi mẫu âm thanh
         for (int i = 0; i < samples_count; i++) {
-          audio_samples[i] = audio_samples[i] / 2; // Giảm amplitude xuống 50%
+          audio_samples[i] = audio_samples[i] * 0.05; // Giảm amplitude xuống 10%
         }
         
         // Ghi dữ liệu ra I2S
@@ -501,6 +523,8 @@ void playbackTask(void* parameter) {
                         write_result, esp_err_to_name(write_result), chunk->length);
         } else if (bytes_written != chunk->length) {
           Serial.printf("Chỉ ghi được %d/%d bytes\n", bytes_written, chunk->length);
+        } else {
+          Serial.printf("Played %d bytes of audio\n", bytes_written);
         }
 
         // Giải phóng bộ nhớ
@@ -525,6 +549,10 @@ void setup() {
   digitalWrite(LED_RECORD, LOW);
   pinMode(LED_PLAY, OUTPUT);
   digitalWrite(LED_PLAY, LOW);
+
+  // Thêm cấu hình cho chân Shutdown của loa
+  pinMode(SPEAKER_SD_PIN, OUTPUT);
+  digitalWrite(SPEAKER_SD_PIN, LOW);  // Mặc định tắt loa khi khởi động
 
   // Tạo mutex cho I2S
   i2s_mutex = xSemaphoreCreateMutex();
