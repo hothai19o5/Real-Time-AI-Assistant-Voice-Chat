@@ -263,8 +263,8 @@ wss.on('connection', (ws) => {
 
                                             ws.send(audioChunks[i]);
 
-                                            // Đợi một khoảng thời gian nhỏ giữa các chunk để tránh tắc nghẽn
-                                            await new Promise(resolve => setTimeout(resolve, 10));
+                                            // Delay tương ứng với thời gian phát thực tế của mỗi chunk
+                                            await new Promise(resolve => setTimeout(resolve, 10)); // 128ms tương đương 2048 mẫu ở 16kHz
                                         }
 
                                         // Báo hiệu kết thúc luồng âm thanh
@@ -272,6 +272,7 @@ wss.on('connection', (ws) => {
                                             ws.send("AUDIO_STREAM_END");
                                             console.log("Đã gửi xong dữ liệu âm thanh.");
                                         }
+
                                     };
 
                                     // Bắt đầu quá trình gửi

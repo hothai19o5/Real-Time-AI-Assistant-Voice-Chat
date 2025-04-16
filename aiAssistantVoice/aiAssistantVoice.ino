@@ -11,7 +11,7 @@ const char* ssid = "B10509_2.4G";
 const char* password = "509509509";
 
 // --- Cấu hình Server ---
-const char* websockets_server_host = "192.168.1.3";
+const char* websockets_server_host = "192.168.1.22";
 const uint16_t websockets_server_port = 8080;
 const char* websockets_path = "/";
 
@@ -46,6 +46,19 @@ typedef struct {
   uint8_t* data;
   size_t length;
 } AudioChunk;
+
+// --- Theo dõi trạng thái I2S hiện tại ---
+typedef enum {
+  I2S_MODE_NONE,
+  I2S_MODE_MIC,
+  I2S_MODE_SPEAKER
+} current_i2s_mode_t;
+
+// Biến để theo dõi chế độ I2S hiện tại
+volatile current_i2s_mode_t current_i2s_mode = I2S_MODE_NONE;
+
+// Mutex để bảo vệ việc thay đổi cấu hình I2S
+SemaphoreHandle_t i2s_mutex = NULL;
 
 // --- Biến Global ---
 WebSocketsClient webSocket;
@@ -208,9 +221,177 @@ esp_err_t i2s_install() {
   return ESP_OK;
 }
 
+// --- Hàm hủy cài đặt I2S ---
+esp_err_t i2s_uninstall() {
+  esp_err_t err = i2s_driver_uninstall(I2S_PORT);
+  if (err != ESP_OK) {
+    Serial.printf("Failed to uninstall I2S driver. Error: %d (%s)\n", err, esp_err_to_name(err));
+    return err;
+  }
+  Serial.println("I2S Driver uninstalled.");
+  return ESP_OK;
+}
+
+// --- Hàm cấu hình I2S cho microphone (32-bit) ---
+esp_err_t i2s_install_mic() {
+  i2s_config_t i2s_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate = I2S_SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_RX,  // 32-bit cho INMP441
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
+    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+#else
+    .channel_format = MIC_CHANNEL_FMT,
+#endif
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count = I2S_BUFFER_COUNT,
+    .dma_buf_len = I2S_READ_LEN / I2S_BUFFER_COUNT,
+    .use_apll = false,
+    .tx_desc_auto_clear = true,
+    .fixed_mclk = 0
+  };
+
+  esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+  if (err != ESP_OK) {
+    Serial.printf("Failed to install I2S driver for mic. Error: %d (%s)\n", err, esp_err_to_name(err));
+    return err;
+  }
+  Serial.println("I2S Driver for mic installed.");
+
+  i2s_pin_config_t pin_config = {
+    .bck_io_num = I2S_SCK,
+    .ws_io_num = I2S_WS,
+    .data_out_num = -1,  // Không dùng output khi thu âm
+    .data_in_num = I2S_SD_IN
+  };
+
+  err = i2s_set_pin(I2S_PORT, &pin_config);
+  if (err != ESP_OK) {
+    Serial.printf("Failed to set I2S pins for mic. Error: %d (%s)\n", err, esp_err_to_name(err));
+    i2s_driver_uninstall(I2S_PORT);
+    return err;
+  }
+  Serial.println("I2S Pins for mic configured.");
+
+  i2s_zero_dma_buffer(I2S_PORT);
+  return ESP_OK;
+}
+
+// --- Hàm cấu hình I2S cho loa (16-bit) ---
+esp_err_t i2s_install_speaker() {
+  i2s_config_t i2s_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+    .sample_rate = I2S_SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_TX,  // 16-bit cho MAX98357A
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
+    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+#else
+    .channel_format = SPEAKER_CHANNEL_FMT,
+#endif
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count = I2S_BUFFER_COUNT,
+    .dma_buf_len = I2S_READ_LEN / I2S_BUFFER_COUNT,
+    .use_apll = false,
+    .tx_desc_auto_clear = true,
+    .fixed_mclk = 0
+  };
+
+  esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
+  if (err != ESP_OK) {
+    Serial.printf("Failed to install I2S driver for speaker. Error: %d (%s)\n", err, esp_err_to_name(err));
+    return err;
+  }
+  Serial.println("I2S Driver for speaker installed.");
+
+  i2s_pin_config_t pin_config = {
+    .bck_io_num = I2S_SCK,
+    .ws_io_num = I2S_WS,
+    .data_out_num = I2S_SD_OUT,
+    .data_in_num = -1  // Không dùng input khi phát âm thanh
+  };
+
+  err = i2s_set_pin(I2S_PORT, &pin_config);
+  if (err != ESP_OK) {
+    Serial.printf("Failed to set I2S pins for speaker. Error: %d (%s)\n", err, esp_err_to_name(err));
+    i2s_driver_uninstall(I2S_PORT);
+    return err;
+  }
+  Serial.println("I2S Pins for speaker configured.");
+
+  i2s_zero_dma_buffer(I2S_PORT);
+  return ESP_OK;
+}
+
+// --- Hàm chuyển đổi chế độ I2S ---
+esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
+  if (xSemaphoreTake(i2s_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+    Serial.println("Failed to get I2S mutex. Cannot switch mode.");
+    return ESP_FAIL;
+  }
+  
+  // Nếu chế độ mới giống chế độ hiện tại, không cần làm gì
+  if (current_i2s_mode == new_mode) {
+    xSemaphoreGive(i2s_mutex);
+    return ESP_OK;
+  }
+  
+  // Hủy cài đặt I2S hiện tại (nếu có)
+  if (current_i2s_mode != I2S_MODE_NONE) {
+    esp_err_t err = i2s_uninstall();
+    if (err != ESP_OK) {
+      xSemaphoreGive(i2s_mutex);
+      return err;
+    }
+  }
+  
+  // Cấu hình I2S theo chế độ mới
+  esp_err_t result = ESP_OK;
+  switch (new_mode) {
+    case I2S_MODE_MIC:
+      result = i2s_install_mic();
+      if (result == ESP_OK) {
+        current_i2s_mode = I2S_MODE_MIC;
+        Serial.println("I2S switched to microphone mode (32-bit)");
+      }
+      break;
+      
+    case I2S_MODE_SPEAKER:
+      result = i2s_install_speaker();
+      if (result == ESP_OK) {
+        current_i2s_mode = I2S_MODE_SPEAKER;
+        Serial.println("I2S switched to speaker mode (16-bit)");
+      }
+      break;
+      
+    case I2S_MODE_NONE:
+      current_i2s_mode = I2S_MODE_NONE;
+      Serial.println("I2S switched to none mode");
+      break;
+      
+    default:
+      Serial.println("Unknown I2S mode requested");
+      result = ESP_FAIL;
+  }
+  
+  xSemaphoreGive(i2s_mutex);
+  return result;
+}
+
 // --- Task ghi âm và gửi đi ---
 void recordAndSendTask(void* parameter) {
   Serial.println("Recording task started...");
+  
+  // Chuyển I2S sang chế độ mic
+  if (switch_i2s_mode(I2S_MODE_MIC) != ESP_OK) {
+    Serial.println("Failed to configure I2S for recording. Exiting task.");
+    isRecording = false;
+    recordTaskHandle = NULL;
+    vTaskDelete(NULL);
+    return;
+  }
+  
   int32_t* i2s_read_buffer = NULL;
   int16_t* pcm_send_buffer = NULL;
 
@@ -286,10 +467,33 @@ void playbackTask(void* parameter) {
   Serial.println("Playback task started...");
   AudioChunk* chunk = NULL;
   size_t bytes_written = 0;
+  bool speaker_mode_active = false;
 
   while (true) {
     if (xQueueReceive(playbackQueue, &chunk, portMAX_DELAY) == pdPASS) {
       if (chunk && chunk->data && chunk->length > 0) {
+        // Chỉ chuyển sang chế độ loa khi cần phát âm thanh
+        if (!speaker_mode_active) {
+          if (switch_i2s_mode(I2S_MODE_SPEAKER) != ESP_OK) {
+            Serial.println("Failed to configure I2S for playback. Skipping chunk.");
+            free(chunk->data);
+            free(chunk);
+            chunk = NULL;
+            continue;
+          }
+          speaker_mode_active = true;
+        }
+
+        // --- GIẢM ÂM LƯỢNG 50% ---
+        // Giả định dữ liệu là 16-bit PCM (2 byte mỗi mẫu)
+        int16_t* audio_samples = (int16_t*)chunk->data;
+        int samples_count = chunk->length / 2; // Số lượng mẫu 16-bit
+        
+        // Điều chỉnh biên độ của mỗi mẫu âm thanh
+        for (int i = 0; i < samples_count; i++) {
+          audio_samples[i] = audio_samples[i] / 2; // Giảm amplitude xuống 50%
+        }
+        
         // Ghi dữ liệu ra I2S
         esp_err_t write_result = i2s_write(I2S_PORT, chunk->data, chunk->length, &bytes_written, pdMS_TO_TICKS(1000));
         if (write_result != ESP_OK) {
@@ -322,6 +526,13 @@ void setup() {
   pinMode(LED_PLAY, OUTPUT);
   digitalWrite(LED_PLAY, LOW);
 
+  // Tạo mutex cho I2S
+  i2s_mutex = xSemaphoreCreateMutex();
+  if (i2s_mutex == NULL) {
+    Serial.println("Failed to create I2S mutex. Halting.");
+    while (1);
+  }
+
   Serial.printf("Connecting to WiFi: %s\n", ssid);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -332,13 +543,15 @@ void setup() {
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
 
-  Serial.println("Initializing I2S...");
-  if (i2s_install() != ESP_OK) {
-    Serial.println("I2S initialization failed. Halting.");
-    while (1)
-      ;
-  }
-  Serial.println("I2S Initialized Successfully.");
+  // Không khởi tạo I2S ở đây nữa, mỗi task sẽ cấu hình khi cần
+
+  // Serial.println("Initializing I2S...");
+  // if (i2s_install() != ESP_OK) {
+  //   Serial.println("I2S initialization failed. Halting.");
+  //   while (1)
+  //     ;
+  // }
+  // Serial.println("I2S Initialized Successfully.");
 
   // Tạo hàng đợi Playback chứa con trỏ tới AudioChunk*
   playbackQueue = xQueueCreate(PLAYBACK_QUEUE_LENGTH, sizeof(AudioChunk*));
