@@ -38,6 +38,8 @@ const char* websockets_path = "/";
 #define PLAYBACK_QUEUE_ITEM_SIZE (I2S_READ_LEN / 2)  // Kích thước tối đa ước tính
 #define PLAYBACK_TASK_STACK_SIZE 4096
 
+#define PIN_BUTTON 4    // Chân nút nhấn ghi âm
+
 #define LED_RECORD 17
 #define LED_PLAY 16  // !!! LED MỚI: LED báo đang phát (Tùy chọn) !!! - Chọn chân phù hợp
 #define MIC_GAIN_FACTOR 4.0  // Hệ số khuếch đại microphone, điều chỉnh theo nhu cầu
@@ -48,6 +50,11 @@ typedef struct {
   uint8_t* data;
   size_t length;
 } AudioChunk;
+
+// Add at the top with other global variables
+bool buttonPressed = false;
+unsigned long lastButtonChangeTime = 0;
+#define DEBOUNCE_TIME 50  // 50ms debounce time
 
 // --- Theo dõi trạng thái I2S hiện tại ---
 typedef enum {
@@ -405,7 +412,6 @@ void recordAndSendTask(void* parameter) {
   int32_t* i2s_read_buffer = NULL;
   int16_t* pcm_send_buffer = NULL;
 
-  // *** SỬA 2: Di chuyển khai báo biến lên đây ***
   size_t bytes_read = 0;
   size_t bytes_to_send = 0;
 
@@ -413,36 +419,33 @@ void recordAndSendTask(void* parameter) {
   i2s_read_buffer = (int32_t*)malloc(I2S_READ_LEN);
   if (!i2s_read_buffer) {
     Serial.println("Failed to allocate memory for I2S read buffer!");
-    goto cleanup;  // Giờ nhảy sẽ không cắt ngang khởi tạo bytes_read/bytes_to_send
+    goto cleanup;
   }
 
   // Cấp phát bộ đệm gửi (16-bit)
   pcm_send_buffer = (int16_t*)malloc(I2S_READ_LEN / 2);
   if (!pcm_send_buffer) {
     Serial.println("Failed to allocate memory for PCM send buffer!");
-    goto cleanup;  // Giờ nhảy sẽ không cắt ngang khởi tạo bytes_read/bytes_to_send
+    goto cleanup;
   }
 
   recordingStartTime = millis();
-  Serial.println("Start Recording...");
+  Serial.println("Start Recording for 5 seconds...");
   digitalWrite(LED_RECORD, HIGH);
 
+  // Ghi âm trong khoảng thời gian cố định là 5 giây
   while (isRecording && (millis() - recordingStartTime < RECORD_DURATION_MS)) {
     esp_err_t read_result = i2s_read(I2S_PORT, i2s_read_buffer, I2S_READ_LEN, &bytes_read, pdMS_TO_TICKS(1000));
 
     if (read_result == ESP_OK && bytes_read > 0) {
+      // Phần xử lý âm thanh giữ nguyên
       int samples_read = bytes_read / 4;
       bytes_to_send = samples_read * 2;
 
-      // Áp dụng khuếch đại khi chuyển đổi từ 32-bit sang 16-bit
       for (int i = 0; i < samples_read; i++) {
-        // Lấy giá trị 16-bit (MSB từ mẫu 32-bit)
         int32_t sample = i2s_read_buffer[i] >> 16;
-        
-        // Áp dụng khuếch đại với bảo vệ chống clipping
         sample = (int32_t)(sample * MIC_GAIN_FACTOR);
         
-        // Giới hạn giá trị trong phạm vi 16-bit signed
         if (sample > 32767) sample = 32767;
         if (sample < -32768) sample = -32768;
         
@@ -464,8 +467,9 @@ void recordAndSendTask(void* parameter) {
     }
   }
 
-cleanup:  // Nhãn để nhảy tới khi có lỗi cấp phát hoặc kết thúc
-  Serial.println("Recording finished.");
+cleanup:
+  // Rest of cleanup code stays the same
+  Serial.println("Recording finished after 5 seconds.");
   digitalWrite(LED_RECORD, LOW);
   isRecording = false;
 
@@ -481,7 +485,6 @@ cleanup:  // Nhãn để nhảy tới khi có lỗi cấp phát hoặc kết th�
   recordTaskHandle = NULL;
   vTaskDelete(NULL);
 }
-
 
 // --- Task phát âm thanh ---
 void playbackTask(void* parameter) {
@@ -513,7 +516,7 @@ void playbackTask(void* parameter) {
         
         // Điều chỉnh biên độ của mỗi mẫu âm thanh
         for (int i = 0; i < samples_count; i++) {
-          audio_samples[i] = audio_samples[i] * 0.05; // Giảm amplitude xuống 10%
+          audio_samples[i] = audio_samples[i] * 1; // Giảm amplitude xuống 10%
         }
         
         // Ghi dữ liệu ra I2S
@@ -544,6 +547,8 @@ void playbackTask(void* parameter) {
 void setup() {
   Serial.begin(115200);
   Serial.println("\n--- ESP32 Audio Record & Playback via WebSocket ---");
+
+  pinMode(PIN_BUTTON, INPUT_PULLUP);
 
   pinMode(LED_RECORD, OUTPUT);
   digitalWrite(LED_RECORD, LOW);
@@ -613,12 +618,21 @@ void setup() {
 void loop() {
   webSocket.loop();
 
-  if (Serial.available()) {
-    char c = Serial.read();
-    if (c == 's' && !isRecording && webSocket.isConnected()) {
+  // Check button state with debounce
+  bool currentButtonState = digitalRead(PIN_BUTTON) == LOW; // LOW when pressed (pull-up resistor)
+  unsigned long currentTime = millis();
+  
+  // Process button state changes with debounce
+  if (currentTime - lastButtonChangeTime > DEBOUNCE_TIME) {
+    // Button press detected - start recording for 5 seconds
+    if (currentButtonState && !buttonPressed && !isRecording && webSocket.isConnected()) {
+      buttonPressed = true;
+      lastButtonChangeTime = currentTime;
+      
+      Serial.println("Button pressed. Starting recording for 5 seconds...");
+      isRecording = true;
+      
       if (recordTaskHandle == NULL) {
-        Serial.println("Command 's' received. Starting recording...");
-        isRecording = true;
         xTaskCreatePinnedToCore(
           recordAndSendTask, "RecordSendTask", 8192, NULL, 10, &recordTaskHandle, 1);
         if (recordTaskHandle == NULL) {
@@ -627,13 +641,28 @@ void loop() {
         } else {
           Serial.println("Recording Task Created on Core 1.");
         }
-      } else {
-        Serial.println("Recording task is already running.");
       }
-    } else if (c == 's' && !webSocket.isConnected()) {
-      Serial.println("WebSocket not connected. Cannot start recording.");
-    } else if (c == 's' && isRecording) {
-      Serial.println("Already recording.");
+    }
+    
+    // Reset button state when released (only for debounce purposes)
+    if (!currentButtonState && buttonPressed) {
+      buttonPressed = false;
+      lastButtonChangeTime = currentTime;
+    }
+  }
+
+  // Keep Serial monitor command for testing
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == 's' && !isRecording && webSocket.isConnected()) {
+      Serial.println("Command 's' received. Starting recording for 5 seconds...");
+      isRecording = true;
+      xTaskCreatePinnedToCore(
+        recordAndSendTask, "RecordSendTask", 8192, NULL, 10, &recordTaskHandle, 1);
+      if (recordTaskHandle == NULL) {
+        Serial.println("Failed to create recording task!");
+        isRecording = false;
+      }
     }
   }
 }

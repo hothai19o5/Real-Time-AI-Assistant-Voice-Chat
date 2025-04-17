@@ -153,9 +153,9 @@ wss.on('connection', (ws) => {
                     fullAudioBuffer
                 ]);
 
-                const outputFile = `received_audio_${Date.now()}.wav`;
-                fs.writeFileSync(outputFile, wavData);
-                console.log(`Saved received audio to: ${outputFile}`);
+                // const outputFile = `received_audio_${Date.now()}.wav`;
+                // fs.writeFileSync(outputFile, wavData);
+                // console.log(`Saved received audio to: ${outputFile}`);
 
                 // Client đã gửi xong âm thanh
                 const finalResult = recognizer.finalResult();
@@ -226,35 +226,54 @@ wss.on('connection', (ws) => {
                                     // Thêm đoạn này để debug dữ liệu PCM gốc
                                     console.log(`Dữ liệu PCM gốc: ${pcm.length} mẫu, từ ${pcm[0]} đến ${pcm[pcm.length - 1]}`);
 
-                                    // Chuyển đổi Int16Array thành Buffer đúng cách
-                                    const pcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+                                    // Lấy thêm dữ liệu từ buffer nếu có
+                                    const flushedPcm = orcaStream.flush();
+                                    
+                                    let finalPcmBuffer;
+                                    
+                                    if (flushedPcm !== null && flushedPcm.length > 0) {
+                                        console.log(`Dữ liệu flush bổ sung: ${flushedPcm.length} mẫu`);
+                                        
+                                        // Tạo một buffer mới kết hợp cả pcm và flushedPcm
+                                        const combinedLength = pcm.length + flushedPcm.length;
+                                        const combinedPcm = new Int16Array(combinedLength);
+                                        combinedPcm.set(pcm, 0);
+                                        combinedPcm.set(flushedPcm, pcm.length);
+                                        
+                                        // Chuyển đổi Int16Array thành Buffer đúng cách
+                                        finalPcmBuffer = Buffer.from(combinedPcm.buffer, combinedPcm.byteOffset, combinedPcm.byteLength);
+                                        console.log(`Dữ liệu PCM kết hợp: ${combinedLength} mẫu`);
+                                    } else {
+                                        // Chuyển đổi Int16Array thành Buffer đúng cách - chỉ pcm
+                                        finalPcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+                                    }
 
                                     // Convert PCM to WAV format - đảm bảo header đúng
-                                    const wavHeaderBuffer = createWavHeader(pcmBuffer.length, {
+                                    const wavHeaderBuffer = createWavHeader(finalPcmBuffer.length, {
                                         numChannels: 1,
                                         sampleRate: 16000,
                                         bitsPerSample: 16
                                     });
 
                                     // Concatenate header and PCM data
-                                    const wavData = Buffer.concat([wavHeaderBuffer, pcmBuffer]);
+                                    const wavData = Buffer.concat([wavHeaderBuffer, finalPcmBuffer]);
 
                                     // Debug: in thông tin chi tiết về file WAV
-                                    console.log(`WAV header: ${wavHeaderBuffer.length} bytes`);
-                                    console.log(`WAV data: ${pcmBuffer.length} bytes`);
-                                    console.log(`Tổng kích thước WAV: ${wavData.length} bytes`);
+                                    // console.log(`WAV header: ${wavHeaderBuffer.length} bytes`);
+                                    // console.log(`WAV data: ${finalPcmBuffer.length} bytes`);
+                                    // console.log(`Tổng kích thước WAV: ${wavData.length} bytes`);
 
                                     // Lưu file để debug
-                                    const debugOutputFile = `tts_output_${Date.now()}.wav`;
-                                    fs.writeFileSync(debugOutputFile, wavData);
-
-                                    // Chia thành chunks nhỏ hơn để dễ xử lý
+                                    // const debugOutputFile = `tts_output_${Date.now()}.wav`;
+                                    // fs.writeFileSync(debugOutputFile, wavData);
+                                    
+                                    // Tiếp tục với phần gửi audio chunks qua WebSocket như trước
                                     const audioChunks = chunkAudioData(wavData, 2048);
                                     console.log(`Đã chia âm thanh thành ${audioChunks.length} phần`);
 
-                                    // Gửi từng chunk với khoảng thời gian nhỏ giữa các lần gửi
+                                    // Thay đổi hàm sendChunks:
                                     const sendChunks = async () => {
-                                        // Gửi chunk đầu tiên có header WAV
+                                        // Gửi các chunks như trước
                                         for (let i = 0; i < audioChunks.length; i++) {
                                             if (ws.readyState !== WebSocket.OPEN) {
                                                 console.log("Mất kết nối WebSocket trong quá trình gửi!");
@@ -263,16 +282,25 @@ wss.on('connection', (ws) => {
 
                                             ws.send(audioChunks[i]);
 
-                                            // Delay tương ứng với thời gian phát thực tế của mỗi chunk
-                                            await new Promise(resolve => setTimeout(resolve, 10)); // 128ms tương đương 2048 mẫu ở 16kHz
+                                            // Tăng delay để đảm bảo xử lý đầy đủ
+                                            await new Promise(resolve => setTimeout(resolve, 50)); // Tăng từ 10ms lên 50ms
                                         }
+
+                                        // Thêm một khoảng im lặng ngắn ở cuối để đảm bảo phát hết
+                                        if (ws.readyState === WebSocket.OPEN) {
+                                            const silenceBuffer = Buffer.alloc(1600, 0); // 50ms of silence
+                                            ws.send(silenceBuffer);
+                                            await new Promise(resolve => setTimeout(resolve, 100)); 
+                                        }
+
+                                        // Đợi thêm chút thời gian trước khi gửi tín hiệu kết thúc
+                                        await new Promise(resolve => setTimeout(resolve, 300));
 
                                         // Báo hiệu kết thúc luồng âm thanh
                                         if (ws.readyState === WebSocket.OPEN) {
                                             ws.send("AUDIO_STREAM_END");
                                             console.log("Đã gửi xong dữ liệu âm thanh.");
                                         }
-
                                     };
 
                                     // Bắt đầu quá trình gửi
