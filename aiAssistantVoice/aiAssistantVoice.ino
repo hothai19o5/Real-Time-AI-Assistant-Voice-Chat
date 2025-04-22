@@ -20,7 +20,7 @@ const char* websockets_path = "/";
 #define I2S_SD_IN 32
 #define I2S_SD_OUT 25  // !!! CHÂN MỚI: Chân Serial Data OUT (Tới MAX98357A) !!! - Chọn chân phù hợp
 #define I2S_SCK 14
-#define SPEAKER_SD_PIN 26 // Chân Shutdown cho loa MAX98357A
+#define SPEAKER_SD_PIN 26  // Chân Shutdown cho loa MAX98357A
 #define I2S_PORT I2S_NUM_0
 #define I2S_SAMPLE_RATE (16000)
 #define I2S_BITS_PER_SAMPLE_RX I2S_BITS_PER_SAMPLE_32BIT
@@ -38,10 +38,10 @@ const char* websockets_path = "/";
 #define PLAYBACK_QUEUE_ITEM_SIZE (I2S_READ_LEN / 2)  // Kích thước tối đa ước tính
 #define PLAYBACK_TASK_STACK_SIZE 4096
 
-#define PIN_BUTTON 4    // Chân nút nhấn ghi âm
+#define PIN_BUTTON 4  // Chân nút nhấn ghi âm
 
 #define LED_RECORD 17
-#define LED_PLAY 16  // !!! LED MỚI: LED báo đang phát (Tùy chọn) !!! - Chọn chân phù hợp
+#define LED_PLAY 16          // !!! LED MỚI: LED báo đang phát (Tùy chọn) !!! - Chọn chân phù hợp
 #define MIC_GAIN_FACTOR 4.0  // Hệ số khuếch đại microphone, điều chỉnh theo nhu cầu
 
 // *** SỬA 1: Di chuyển định nghĩa AudioChunk lên đây ***
@@ -83,29 +83,34 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
     case WStype_DISCONNECTED:
       Serial.println("[WSc] Disconnected!");
       digitalWrite(LED_PLAY, LOW);
-      // Cân nhắc việc xóa queue playback khi mất kết nối để tránh phát dữ liệu cũ
+      // Xử lý ngắt kết nối - đảm bảo tắt ghi âm nếu đang ghi
+      isRecording = false;
+      // Đặt về chế độ NONE khi mất kết nối
+      switch_i2s_mode(I2S_MODE_NONE);
+      // Xóa queue để tránh phát lại dữ liệu cũ khi kết nối lại
       if (playbackQueue != NULL) {
-        xQueueReset(playbackQueue);  // Xóa sạch queue
-                                     // Lưu ý: Việc này không giải phóng bộ nhớ của các chunk đã cấp phát trong queue!
-                                     // Để giải phóng bộ nhớ, cần lặp qua queue và free trước khi reset, hoặc
-                                     // chấp nhận rò rỉ nhỏ khi disconnect đột ngột. Reset là cách đơn giản nhất.
+        // Xóa sạch các chunk trong queue để tránh rò rỉ bộ nhớ
+        AudioChunk* chunk = NULL;
+        while (xQueueReceive(playbackQueue, &chunk, 0) == pdTRUE) {
+          if (chunk) {
+            if (chunk->data) free(chunk->data);
+            free(chunk);
+          }
+        }
+        xQueueReset(playbackQueue);
       }
       break;
     case WStype_CONNECTED:
       Serial.printf("[WSc] Connected to url: %s\n", payload);
       break;
     case WStype_TEXT:
-      Serial.printf("[WSc] Received text: %s\n", payload);
+      // Serial.printf("[WSc] Received text: %s\n", payload);
       if (strcmp((char*)payload, "AUDIO_STREAM_START") == 0) {
         digitalWrite(LED_PLAY, HIGH);
         Serial.println("Playback starting command received.");
       } else if (strcmp((char*)payload, "AUDIO_STREAM_END") == 0) {
         digitalWrite(LED_PLAY, LOW);
         Serial.println("Playback ending command received.");
-      } else {
-        // This is regular text (like Gemini response)
-        Serial.println("Received text response:");
-        Serial.println((char*)payload);
       }
       break;
     case WStype_BIN:
@@ -296,7 +301,7 @@ esp_err_t i2s_install_speaker() {
 
   // Bật loa khi chuyển sang chế độ speaker
   digitalWrite(SPEAKER_SD_PIN, HIGH);  // Đặt chân SD ở mức HIGH để bật loa
-  
+
   i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
     .sample_rate = I2S_SAMPLE_RATE,
@@ -347,13 +352,13 @@ esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
     Serial.println("Failed to get I2S mutex. Cannot switch mode.");
     return ESP_FAIL;
   }
-  
+
   // Nếu chế độ mới giống chế độ hiện tại, không cần làm gì
   if (current_i2s_mode == new_mode) {
     xSemaphoreGive(i2s_mutex);
     return ESP_OK;
   }
-  
+
   // Hủy cài đặt I2S hiện tại (nếu có)
   if (current_i2s_mode != I2S_MODE_NONE) {
     esp_err_t err = i2s_uninstall();
@@ -362,7 +367,7 @@ esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
       return err;
     }
   }
-  
+
   // Cấu hình I2S theo chế độ mới
   esp_err_t result = ESP_OK;
   switch (new_mode) {
@@ -373,7 +378,7 @@ esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
         Serial.println("I2S switched to microphone mode (32-bit)");
       }
       break;
-      
+
     case I2S_MODE_SPEAKER:
       result = i2s_install_speaker();
       if (result == ESP_OK) {
@@ -381,17 +386,17 @@ esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
         Serial.println("I2S switched to speaker mode (16-bit)");
       }
       break;
-      
+
     case I2S_MODE_NONE:
       current_i2s_mode = I2S_MODE_NONE;
       Serial.println("I2S switched to none mode");
       break;
-      
+
     default:
       Serial.println("Unknown I2S mode requested");
       result = ESP_FAIL;
   }
-  
+
   xSemaphoreGive(i2s_mutex);
   return result;
 }
@@ -399,7 +404,7 @@ esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
 // --- Task ghi âm và gửi đi ---
 void recordAndSendTask(void* parameter) {
   Serial.println("Recording task started...");
-  
+
   // Chuyển I2S sang chế độ mic
   if (switch_i2s_mode(I2S_MODE_MIC) != ESP_OK) {
     Serial.println("Failed to configure I2S for recording. Exiting task.");
@@ -408,7 +413,7 @@ void recordAndSendTask(void* parameter) {
     vTaskDelete(NULL);
     return;
   }
-  
+
   int32_t* i2s_read_buffer = NULL;
   int16_t* pcm_send_buffer = NULL;
 
@@ -445,10 +450,10 @@ void recordAndSendTask(void* parameter) {
       for (int i = 0; i < samples_read; i++) {
         int32_t sample = i2s_read_buffer[i] >> 16;
         sample = (int32_t)(sample * MIC_GAIN_FACTOR);
-        
+
         if (sample > 32767) sample = 32767;
         if (sample < -32768) sample = -32768;
-        
+
         pcm_send_buffer[i] = (int16_t)sample;
       }
 
@@ -481,6 +486,9 @@ cleanup:
     Serial.println("Sent END_OF_STREAM");
   }
 
+  // Sau khi kết thúc ghi âm, chuyển về chế độ NONE để chuẩn bị cho lần tiếp theo
+  switch_i2s_mode(I2S_MODE_NONE);
+
   Serial.println("Recording task exiting.");
   recordTaskHandle = NULL;
   vTaskDelete(NULL);
@@ -492,9 +500,13 @@ void playbackTask(void* parameter) {
   AudioChunk* chunk = NULL;
   size_t bytes_written = 0;
   bool speaker_mode_active = false;
+  unsigned long lastAudioTime = 0;
 
   while (true) {
-    if (xQueueReceive(playbackQueue, &chunk, portMAX_DELAY) == pdPASS) {
+    if (xQueueReceive(playbackQueue, &chunk, pdMS_TO_TICKS(1000)) == pdPASS) {
+      // Có âm thanh cần phát - Cập nhật thời gian nhận audio gần nhất
+      lastAudioTime = millis();
+
       if (chunk && chunk->data && chunk->length > 0) {
         // Chỉ chuyển sang chế độ loa khi cần phát âm thanh
         if (!speaker_mode_active) {
@@ -512,13 +524,13 @@ void playbackTask(void* parameter) {
         // --- GIẢM ÂM LƯỢNG 50% ---
         // Giả định dữ liệu là 16-bit PCM (2 byte mỗi mẫu)
         int16_t* audio_samples = (int16_t*)chunk->data;
-        int samples_count = chunk->length / 2; // Số lượng mẫu 16-bit
-        
+        int samples_count = chunk->length / 2;  // Số lượng mẫu 16-bit
+
         // Điều chỉnh biên độ của mỗi mẫu âm thanh
         for (int i = 0; i < samples_count; i++) {
-          audio_samples[i] = audio_samples[i] * 1; // Giảm amplitude xuống 10%
+          audio_samples[i] = audio_samples[i] * 1;  // Giảm amplitude xuống 10%
         }
-        
+
         // Ghi dữ liệu ra I2S
         esp_err_t write_result = i2s_write(I2S_PORT, chunk->data, chunk->length, &bytes_written, pdMS_TO_TICKS(1000));
         if (write_result != ESP_OK) {
@@ -526,8 +538,6 @@ void playbackTask(void* parameter) {
                         write_result, esp_err_to_name(write_result), chunk->length);
         } else if (bytes_written != chunk->length) {
           Serial.printf("Chỉ ghi được %d/%d bytes\n", bytes_written, chunk->length);
-        } else {
-          Serial.printf("Played %d bytes of audio\n", bytes_written);
         }
 
         // Giải phóng bộ nhớ
@@ -538,6 +548,19 @@ void playbackTask(void* parameter) {
         Serial.println("Nhận được chunk không hợp lệ");
         if (chunk) free(chunk);
         chunk = NULL;
+      }
+    } else {
+      // Không có dữ liệu nhận được trong 1 giây
+      // Nếu đang ở chế độ speaker và đã 3 giây không nhận được âm thanh mới,
+      // thì chuyển về trạng thái ban đầu để sẵn sàng cho ghi âm tiếp
+      if (speaker_mode_active && (millis() - lastAudioTime > 1500)) {
+        Serial.println("Không có âm thanh mới trong 1.5 giây. Chuyển về chế độ ban đầu.");
+        speaker_mode_active = false;
+        // Tắt loa và về trạng thái NONE để sẵn sàng ghi âm tiếp
+        switch_i2s_mode(I2S_MODE_NONE);
+        digitalWrite(SPEAKER_SD_PIN, LOW);  // Tắt loa
+        // Xóa queue để đảm bảo không còn dữ liệu cũ
+        xQueueReset(playbackQueue);
       }
     }
   }
@@ -563,7 +586,8 @@ void setup() {
   i2s_mutex = xSemaphoreCreateMutex();
   if (i2s_mutex == NULL) {
     Serial.println("Failed to create I2S mutex. Halting.");
-    while (1);
+    while (1)
+      ;
   }
 
   Serial.printf("Connecting to WiFi: %s\n", ssid);
@@ -575,16 +599,6 @@ void setup() {
   Serial.println("\nWiFi connected.");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
-
-  // Không khởi tạo I2S ở đây nữa, mỗi task sẽ cấu hình khi cần
-
-  // Serial.println("Initializing I2S...");
-  // if (i2s_install() != ESP_OK) {
-  //   Serial.println("I2S initialization failed. Halting.");
-  //   while (1)
-  //     ;
-  // }
-  // Serial.println("I2S Initialized Successfully.");
 
   // Tạo hàng đợi Playback chứa con trỏ tới AudioChunk*
   playbackQueue = xQueueCreate(PLAYBACK_QUEUE_LENGTH, sizeof(AudioChunk*));
@@ -610,28 +624,34 @@ void setup() {
   }
   Serial.println("Playback Task Created on Core 0.");
 
-  Serial.println("Setup complete. Waiting for WebSocket connection and commands.");
-  Serial.println("Press 's' in Serial Monitor to start recording for 5 seconds.");
+  Serial.println("Setup complete. Waiting for WebSocket connection.");
+  Serial.println("Press the button to start recording for 5 seconds.");
 }
 
 // --- Loop ---
 void loop() {
   webSocket.loop();
 
-  // Check button state with debounce
-  bool currentButtonState = digitalRead(PIN_BUTTON) == LOW; // LOW when pressed (pull-up resistor)
+  // Kiểm tra trạng thái nút nhấn với chống dội
+  bool currentButtonState = digitalRead(PIN_BUTTON) == LOW;  // LOW khi nhấn (pull-up)
   unsigned long currentTime = millis();
-  
-  // Process button state changes with debounce
+
+  // Xử lý thay đổi trạng thái nút nhấn với chống dội
   if (currentTime - lastButtonChangeTime > DEBOUNCE_TIME) {
-    // Button press detected - start recording for 5 seconds
+    // Phát hiện nhấn nút - bắt đầu ghi âm 5 giây
     if (currentButtonState && !buttonPressed && !isRecording && webSocket.isConnected()) {
       buttonPressed = true;
       lastButtonChangeTime = currentTime;
-      
+
+      // Đảm bảo không có chế độ I2S nào đang hoạt động trước khi bắt đầu ghi âm
+      if (current_i2s_mode != I2S_MODE_NONE) {
+        switch_i2s_mode(I2S_MODE_NONE);
+        delay(100);  // Cho phép hệ thống ổn định
+      }
+
       Serial.println("Button pressed. Starting recording for 5 seconds...");
       isRecording = true;
-      
+
       if (recordTaskHandle == NULL) {
         xTaskCreatePinnedToCore(
           recordAndSendTask, "RecordSendTask", 8192, NULL, 10, &recordTaskHandle, 1);
@@ -643,26 +663,11 @@ void loop() {
         }
       }
     }
-    
-    // Reset button state when released (only for debounce purposes)
+
+    // Đặt lại trạng thái nút khi thả (chỉ để chống dội)
     if (!currentButtonState && buttonPressed) {
       buttonPressed = false;
       lastButtonChangeTime = currentTime;
-    }
-  }
-
-  // Keep Serial monitor command for testing
-  if (Serial.available()) {
-    char c = Serial.read();
-    if (c == 's' && !isRecording && webSocket.isConnected()) {
-      Serial.println("Command 's' received. Starting recording for 5 seconds...");
-      isRecording = true;
-      xTaskCreatePinnedToCore(
-        recordAndSendTask, "RecordSendTask", 8192, NULL, 10, &recordTaskHandle, 1);
-      if (recordTaskHandle == NULL) {
-        Serial.println("Failed to create recording task!");
-        isRecording = false;
-      }
     }
   }
 }

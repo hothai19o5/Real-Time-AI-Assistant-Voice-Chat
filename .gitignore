@@ -4,3 +4,6 @@
 /serverNodeJsAi/.env
 /vosk-model-small-en-us-0.15/
 /vosk-model-vn-0.4/
+/vosk-model-en-us-0.22/
+/phowhisper_service/models/
+/music/

@@ -1,58 +1,55 @@
-require('dotenv').config(); // Load biến môi trường từ file .env
-const WebSocket = require('ws');
-const vosk = require('vosk');
-const fs = require('fs');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const { Orca } = require('@picovoice/orca-node');
-
+import dotenv from 'dotenv';
+dotenv.config();        // Load biến môi trường từ file .env
+import { WebSocket, WebSocketServer } from 'ws';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+// import { Orca } from '@picovoice/orca-node';
+import axios from 'axios';
+import FormData from 'form-data';
 
 // --- Cấu hình ---
-const PORT = 8080; // Port server lắng nghe
-const VOSK_MODEL_PATH = "C:/Users/Hotha/Work Space/Code/RealTimeAiAssistantVoiceChat/vosk-model-small-en-us-0.15"; // Đường dẫn đến model Vosk đã tải
-const VOSK_SAMPLE_RATE = 16000; // Phải khớp với ESP32 và model Vosk
-const PICOVOICE_ACCESS_KEY = process.env.PICOVOICE_ACCESS_KEY; // Khóa truy cập Picovoice từ biến môi trường
+const PORT = 8080;                                              // Port server lắng nghe
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;              // Khóa API Gemini từ biến môi trường
+const PHOWHISPER_SERVICE_URL = 'http://localhost:5000/transcribe'; // Định nghĩa URL cho PhoWhisper service
+// Cấu hình FPT TTS API
+const FPT_TTS_API_KEY = process.env.FPT_TTS_API_KEY;            // Khóa API TTS từ biến môi trường
+const FPT_TTS_VOICE = process.env.FPT_TTS_VOICE;
+const WEATHER_API_KEY = process.env.WEATHER_API_KEY;            // Khóa API thời tiết từ biến môi trường
 
-// --- Kiểm tra Model Vosk ---
-if (!fs.existsSync(VOSK_MODEL_PATH)) {
-    console.error(`Vosk model not found at path: ${VOSK_MODEL_PATH}`);
-    console.error("Please download a Vosk model and place it in the specified directory.");
-    process.exit(1); // Thoát nếu không tìm thấy model
+// --- Khởi tạo FPT TTS ---
+if(!FPT_TTS_API_KEY) {
+    console.error("FPT_TTS_API_KEY not found in environment variables.");
+    console.error("Please create a .env file with your FPT TTS API key.");
+    process.exit(1);
 }
 
-// --- Khởi tạo Vosk ---
-vosk.setLogLevel(-1); // Tắt log chi tiết của Vosk
-const model = new vosk.Model(VOSK_MODEL_PATH);
-
-// --- Khởi tạo Picovoice Orca ---
-let orca = new Orca(PICOVOICE_ACCESS_KEY);
-
 // --- Khởi tạo Gemini ---
-const geminiApiKey = process.env.GEMINI_API_KEY;
-if (!geminiApiKey) {
+if (!GEMINI_API_KEY) {
     console.error("GEMINI_API_KEY not found in environment variables.");
     console.error("Please create a .env file with your Gemini API key.");
     process.exit(1);
 }
-const genAI = new GoogleGenerativeAI(geminiApiKey);
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Hoặc model khác phù hợp
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // --- Tạo WebSocket Server ---
-const wss = new WebSocket.Server({
+const wss = new WebSocketServer({
     port: PORT,
-    perMessageDeflate: false // <-- Thêm dòng này để tắt nén 
+    perMessageDeflate: false // Tắt nén dữ liệu, giảm độ trễ, giảm tải CPU 
 });
 console.log(`WebSocket server started on port ${PORT}`);
 
-// Add this function before the WebSocket connection handling
-
+// --- Hàm xử lý định dạng Markdown trong phản hồi của Gemini ---
 function cleanMarkdownFormatting(text) {
-    // Remove bold/italic formatting
+    // Xóa định dạng in đậm, nghiêng
     text = text.replace(/\*\*/g, '');  // Remove **bold**
     text = text.replace(/\*/g, '');    // Remove *italic*
     text = text.replace(/\_\_/g, '');  // Remove __bold__
     text = text.replace(/\_/g, '');    // Remove _italic_
 
-    // Remove code formatting
+    // Xóa các định dạng code
     text = text.replace(/```[\s\S]*?```/g, ''); // Remove code blocks
     text = text.replace(/`([^`]+)`/g, '$1');    // Remove inline code
 
@@ -69,10 +66,8 @@ function cleanMarkdownFormatting(text) {
     return text.trim();
 }
 
-// Thêm hàm này phía trên, sau hàm cleanMarkdownFormatting()
-
 // Hàm chia nhỏ dữ liệu âm thanh thành các chunk
-function chunkAudioData(audioBuffer, chunkSize = 1024) {
+function chunkAudioData(audioBuffer, chunkSize = 2048) {
     const chunks = [];
     let offset = 0;
 
@@ -85,16 +80,326 @@ function chunkAudioData(audioBuffer, chunkSize = 1024) {
     return chunks;
 }
 
+// Hàm tạo header WAV
+function createWavHeader(dataLength, options = {}) {
+    const numChannels = options.numChannels || 1;
+    const sampleRate = options.sampleRate || 16000;
+    const bitsPerSample = options.bitsPerSample || 16;
+    const byteRate = sampleRate * numChannels * bitsPerSample / 8;
+    const blockAlign = numChannels * bitsPerSample / 8;
+    const dataSize = dataLength;
+    const chunkSize = 36 + dataSize;
+
+    const buffer = Buffer.alloc(44);
+    buffer.write('RIFF', 0);                 // ChunkID
+    buffer.writeUInt32LE(chunkSize, 4);      // ChunkSize
+    buffer.write('WAVE', 8);                 // Format
+    buffer.write('fmt ', 12);                // Subchunk1ID
+    buffer.writeUInt32LE(16, 16);            // Subchunk1Size (PCM)
+    buffer.writeUInt16LE(1, 20);             // AudioFormat (PCM = 1)
+    buffer.writeUInt16LE(numChannels, 22);   // NumChannels
+    buffer.writeUInt32LE(sampleRate, 24);    // SampleRate
+    buffer.writeUInt32LE(byteRate, 28);      // ByteRate
+    buffer.writeUInt16LE(blockAlign, 32);    // BlockAlign
+    buffer.writeUInt16LE(bitsPerSample, 34); // BitsPerSample
+    buffer.write('data', 36);                // Subchunk2ID
+    buffer.writeUInt32LE(dataSize, 40);      // Subchunk2Size
+
+    return buffer;
+}
+
+// Function to detect commands in recognized text
+function detectCommand(text) {
+    // Normalize text to lowercase for easier matching
+    const normalizedText = text.toLowerCase().trim();
+    
+    // Music command detection
+    if (normalizedText.includes('bật bài hát') || normalizedText.includes('phát bài hát')) {
+        const songName = extractSongName(normalizedText);
+        return { 
+            type: 'MUSIC', 
+            songName: songName 
+        };
+    }
+    
+    // Weather command detection
+    if (normalizedText.includes('thời tiết hôm nay')) {
+        return { 
+            type: 'WEATHER',
+            location: extractLocation(normalizedText) || 'Hà Nội' // Default location
+        };
+    }
+
+    // Time command detection
+    if (normalizedText.includes('mấy giờ rồi')) {
+        return { 
+            type: 'TIME' 
+        };
+    }
+    
+    // No command detected
+    return { type: 'NORMAL' };
+}
+
+// Extract song name from command
+function extractSongName(text) {
+    // Pattern to match "bật bài hát X" or "phát bài hát X"
+    const musicRegex = /(bật|phát) bài hát\s+(.+)/i;
+    const match = text.match(musicRegex);
+    
+    if (match && match[2]) {
+        return match[2].trim();
+    }
+    return null;
+}
+
+// Extract location from weather query
+function extractLocation(text) {
+    // Pattern to match "thời tiết ở X" or "thời tiết tại X"
+    const weatherRegex = /thời tiết\s+(ở|tại)?\s*(.+)/i;
+    const match = text.match(weatherRegex);
+    
+    if (match && match[2]) {
+        return match[2].trim();
+    }
+    return null;
+}
+
+// Handle music playback
+async function handleMusicCommand(songName, ws) {
+    try {
+        const response = `Đang phát bài hát ${songName}. Xin vui lòng đợi một chút.`;
+        await sendTTSResponse(response, ws);
+
+        // Đường dẫn đến thư mục music
+        const musicDir = "C:/Users/Hotha/Work Space/Code/RealTimeAiAssistantVoiceChat/music";
+
+        // Lọc chỉ lấy file .wav
+        const files = fs.readdirSync(musicDir)
+            .filter(file => file.toLowerCase().endsWith('.wav'));
+
+        // Chọn ngẫu nhiên một file
+        const musicFilePath = path.join(musicDir, files[0]);
+
+        console.log(`Đang phát file nhạc: ${files[0]}`);
+        
+        // Đọc file âm thanh
+        const audioBuffer = fs.readFileSync(musicFilePath);
+        
+        // Gửi thông báo bắt đầu phát nhạc
+        ws.send("AUDIO_STREAM_START");
+        
+        // Chia thành các chunk và gửi qua WebSocket
+        const audioChunks = chunkAudioData(audioBuffer, 2048);
+        
+        for (let i = 0; i < audioChunks.length; i++) {
+            if (ws.readyState !== WebSocket.OPEN) break;
+            ws.send(audioChunks[i]);
+            // Tốc độ gửi nhanh hơn so với TTS để phát nhạc
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        
+        // Kết thúc stream
+        if (ws.readyState === WebSocket.OPEN) {
+            const silenceBuffer = Buffer.alloc(1600, 0); // 50ms of silence
+            ws.send(silenceBuffer);
+            await new Promise(resolve => setTimeout(resolve, 100));
+            ws.send("AUDIO_STREAM_END");
+            
+            // Thông báo kết thúc phát nhạc
+            const musicInfo = `Đã phát bài hát ${path.basename(randomFile, '.wav')}.`;
+            await sendTTSResponse(musicInfo, ws);
+        }
+        
+    } catch (error) {
+        console.error("Error handling music command:", error);
+        await sendTTSResponse("Xin lỗi, không thể phát bài hát này. Vui lòng thử lại.", ws);
+    }
+}
+
+// Handle weather information
+async function handleWeatherCommand(location, ws) {
+    try {
+        const weatherApiKey = WEATHER_API_KEY;
+        const weatherResponse = await fetchWeatherData(location, weatherApiKey);
+        
+        await sendTTSResponse(weatherResponse, ws);
+        
+    } catch (error) {
+        console.error("Error handling weather command:", error);
+        await sendTTSResponse("Xin lỗi, không thể lấy thông tin thời tiết. Vui lòng thử lại sau.", ws);
+    }
+}
+
+// Handle time information
+async function handleTimeCommand(ws) {
+    try {
+        // Lấy thời gian hiện tại
+        const now = new Date();
+        
+        // Định dạng giờ theo kiểu Việt Nam
+        const hours = now.getHours();
+        const minutes = now.getMinutes();
+        
+        // Tạo chuỗi phản hồi
+        const timeResponse = `Bây giờ là ${hours} giờ ${minutes} phút.`;
+        
+        await sendTTSResponse(timeResponse, ws);
+        
+    } catch (error) {
+        console.error("Error handling time command:", error);
+        await sendTTSResponse("Xin lỗi, không thể xác định thời gian hiện tại.", ws);
+    }
+}
+
+// Fetch weather data from API
+async function fetchWeatherData(location, apiKey) {
+    try {
+        // Using WeatherAPI.com instead of OpenWeatherMap
+        const response = await axios.get(`https://api.weatherapi.com/v1/current.json`, {
+            params: {
+                q: location,
+                key: apiKey,
+                lang: 'vi'
+            }
+        });
+        
+        const data = response.data;
+        return `Thời tiết hiện tại ở ${data.location.name}: ${data.current.condition.text}. 
+                Nhiệt độ ${Math.round(data.current.temp_c)} độ xê, 
+                Độ ẩm ${data.current.humidity} phần trăm, 
+                Tốc độ gió ${data.current.wind_kph * 0.277778} mét trên giây.`;
+    } catch (error) {
+        console.error("Weather API error:", error);
+        throw new Error("Không thể truy cập thông tin thời tiết");
+    }
+}
+
+// Helper function to send TTS response using FPT API
+async function sendTTSResponse(text, ws) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    
+    try {
+        ws.send("AUDIO_STREAM_START");
+        
+        // Lấy API key và voice từ biến môi trường
+        const apiKey = FPT_TTS_API_KEY;
+        const voice = FPT_TTS_VOICE;
+        
+        // Chuẩn bị header với format=wav để nhận WAV thay vì MP3
+        const headers = {
+            'api_key': apiKey,
+            'voice': voice,
+            'format': 'wav', 
+            'Cache-Control': 'no-cache'
+        };
+        
+        console.log("Calling FPT TTS API...");
+        
+        // Gọi API FPT để chuyển text thành speech
+        const response = await axios.post(
+            'https://api.fpt.ai/hmi/tts/v5',
+            text,
+            { headers }
+        );
+        
+        console.log("FPT TTS API Response:", response.data);
+        
+        if (response.data.error === 0) {
+            const audioUrl = response.data.async;
+            
+            // Chờ một chút để đảm bảo file đã được tạo xong
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Tải file WAV từ URL
+            console.log("Downloading WAV audio from:", audioUrl);
+            const audioResponse = await axios.get(audioUrl, { responseType: 'arraybuffer' });
+            const audioBuffer = Buffer.from(audioResponse.data);
+            console.log(`Received audio data: ${audioBuffer.length} bytes`);
+            
+            // Chia thành các chunk và gửi qua WebSocket
+            const audioChunks = chunkAudioData(audioBuffer, 2048);
+            
+            for (let i = 0; i < audioChunks.length; i++) {
+                if (ws.readyState !== WebSocket.OPEN) break;
+                ws.send(audioChunks[i]);
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            
+            // Kết thúc stream
+            if (ws.readyState === WebSocket.OPEN) {
+                const silenceBuffer = Buffer.alloc(1600, 0); // 50ms of silence
+                ws.send(silenceBuffer);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                ws.send("AUDIO_STREAM_END");
+            }
+        } else {
+            console.error("FPT TTS API Error:", response.data);
+            throw new Error(`FPT API error: ${response.data.message || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error("Error sending TTS response:", error);
+        
+        // Gửi thông báo lỗi nếu ws vẫn mở
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send("AUDIO_STREAM_END");
+            ws.send(`Error generating speech: ${error.message}`);
+        }
+    }
+}
+
+// Hàm gọi PhoWhisper service
+async function transcribeAudio(audioBuffer) {
+    try {
+        // Tạo WAV header
+        const wavHeaderBuffer = createWavHeader(audioBuffer.length, {
+            numChannels: 1,
+            sampleRate: 16000,
+            bitsPerSample: 16
+        });
+        
+        // Tạo file WAV đầy đủ
+        const wavData = Buffer.concat([wavHeaderBuffer, audioBuffer]);
+        
+        console.log(`Sending audio to PhoWhisper: ${wavData.length} bytes`);
+        
+        // Tạo form data để gửi file
+        const formData = new FormData();
+        formData.append('audio', Buffer.from(wavData), {
+            filename: 'audio.wav',
+            contentType: 'audio/wav'
+        });
+        
+        try {
+            // Gọi API Python với timeout dài hơn
+            const response = await axios.post(PHOWHISPER_SERVICE_URL, formData, {
+                headers: {
+                    ...formData.getHeaders()
+                },
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
+                timeout: 30000  // 30 giây timeout
+            });
+            
+            return response.data;
+        } catch (axiosError) {
+            if (axiosError.response) {
+                // Máy chủ đã phản hồi với mã lỗi
+                console.error("PhoWhisper service error details:", 
+                              axiosError.response.status,
+                              axiosError.response.data);
+            }
+            throw axiosError;
+        }
+    } catch (error) {
+        console.error("Error calling PhoWhisper service:", error.message);
+        throw error;
+    }
+}
+
 // --- Xử lý kết nối Client ---
 wss.on('connection', (ws) => {
     console.log('Client connected');
-
-    // Mở Orca stream khi kết nối WebSocket
-    const orcaStream = orca.streamOpen();
-
-    // Tạo bộ nhận dạng Vosk riêng cho mỗi client
-    const recognizer = new vosk.Recognizer({ model: model, sampleRate: VOSK_SAMPLE_RATE });
-    console.log('Vosk Recognizer created for client.');
 
     let audioChunks = []; // Lưu từng chunk nhận được
 
@@ -102,8 +407,7 @@ wss.on('connection', (ws) => {
         // Kiểm tra xem message là binary (âm thanh) hay text (điều khiển)
         if (Buffer.isBuffer(message) && message.length == 2048) {
             audioChunks.push(message);
-            recognizer.acceptWaveform(message);
-
+            // Không cần gửi cho Vosk nữa
         } else {
             const textMessage = message.toString();
             console.log('Received control message:', textMessage);
@@ -113,275 +417,92 @@ wss.on('connection', (ws) => {
                 const fullAudioBuffer = Buffer.concat(audioChunks);
                 console.log(`Final audio size: ${fullAudioBuffer.length} bytes`);
 
-                function createWavHeader(dataLength, options = {}) {
-                    const numChannels = options.numChannels || 1;
-                    const sampleRate = options.sampleRate || 16000;
-                    const bitsPerSample = options.bitsPerSample || 16;
-                    const byteRate = sampleRate * numChannels * bitsPerSample / 8;
-                    const blockAlign = numChannels * bitsPerSample / 8;
-                    const dataSize = dataLength;
-                    const chunkSize = 36 + dataSize;
-
-                    const buffer = Buffer.alloc(44);
-                    buffer.write('RIFF', 0);                 // ChunkID
-                    buffer.writeUInt32LE(chunkSize, 4);      // ChunkSize
-                    buffer.write('WAVE', 8);                 // Format
-                    buffer.write('fmt ', 12);                // Subchunk1ID
-                    buffer.writeUInt32LE(16, 16);            // Subchunk1Size (PCM)
-                    buffer.writeUInt16LE(1, 20);             // AudioFormat (PCM = 1)
-                    buffer.writeUInt16LE(numChannels, 22);   // NumChannels
-                    buffer.writeUInt32LE(sampleRate, 24);    // SampleRate
-                    buffer.writeUInt32LE(byteRate, 28);      // ByteRate
-                    buffer.writeUInt16LE(blockAlign, 32);    // BlockAlign
-                    buffer.writeUInt16LE(bitsPerSample, 34); // BitsPerSample
-                    buffer.write('data', 36);                // Subchunk2ID
-                    buffer.writeUInt32LE(dataSize, 40);      // Subchunk2Size
-
-                    return buffer;
-                }
-
-
-                // --- Ghi file WAV để kiểm tra âm thanh thô từ ESP32 ---
-                const wavHeaderBuffer = createWavHeader(fullAudioBuffer.length, {
-                    numChannels: 1,
-                    sampleRate: VOSK_SAMPLE_RATE,
-                    bitsPerSample: 16
-                });
-
-                const wavData = Buffer.concat([
-                    wavHeaderBuffer,
-                    fullAudioBuffer
-                ]);
-
-                // const outputFile = `received_audio_${Date.now()}.wav`;
-                // fs.writeFileSync(outputFile, wavData);
-                // console.log(`Saved received audio to: ${outputFile}`);
-
-                // Client đã gửi xong âm thanh
-                const finalResult = recognizer.finalResult();
-
-                const tmp = require('tmp');
-                const sox = require('sox-audio');
-                const { Readable } = require('stream');
-
-                // Gộp toàn bộ âm thanh lại
-                console.log(`Final audio size: ${fullAudioBuffer.length} bytes`);
-
-                // Tạo file tạm WAV đầu vào
-                const tmpInputFile = tmp.tmpNameSync({ postfix: '.wav' });
-
-                // Tạo WAV header cho file tạm đầu vào
-                const tmpInputWavHeaderBuffer = createWavHeader(fullAudioBuffer.length, {
-                    numChannels: 1,
-                    sampleRate: VOSK_SAMPLE_RATE,
-                    bitsPerSample: 16
-                });
-
-                // Ghi file WAV đầy đủ (header + data) vào file tạm
-                const tmpInputWavData = Buffer.concat([
-                    tmpInputWavHeaderBuffer,
-                    fullAudioBuffer
-                ]);
-
-                console.log(`Ghi file WAV tạm với header (${tmpInputWavHeaderBuffer.length} bytes) + data (${fullAudioBuffer.length} bytes)`);
-                fs.writeFileSync(tmpInputFile, tmpInputWavData);
-                console.log(`Đã ghi file tạm thành công: ${tmpInputFile}`);
-
                 try {
-
-                    // Tiếp tục với nhận dạng
-                    recognizer.reset();
-                    recognizer.acceptWaveform(fullAudioBuffer);
-                    const finalResult = recognizer.finalResult();
-                    const recognizedText = finalResult.text;
-                    console.log("Vosk Final Result:", finalResult);
-
-                    if (recognizedText && recognizedText.trim().length > 0) {
+                    // Gọi PhoWhisper service thay vì Vosk
+                    const transcriptionResult = await transcribeAudio(fullAudioBuffer);
+                    console.log("PhoWhisper Result:", transcriptionResult);
+                    
+                    if (transcriptionResult.success && transcriptionResult.text) {
+                        const recognizedText = transcriptionResult.text;
                         console.log(`Recognized Text: "${recognizedText}"`);
-
-                        // Gửi text tới Gemini
-                        try {
-                            console.log("Sending text to Gemini...");
-                            const result = await geminiModel.generateContent(recognizedText);
-                            const response = await result.response;
-                            let geminiText = response.text();
-                            console.log(`Raw Gemini Response: "${geminiText}"`);
-
-                            // Clean markdown formatting before sending to TTS
-                            geminiText = cleanMarkdownFormatting(geminiText);
-                            console.log(`Cleaned Gemini Response: "${geminiText}"`);
-
-                            if (ws.readyState === WebSocket.OPEN) {
-                                ws.send(geminiText);
-
-                                // Send a signal to ESP32 that audio stream is starting
-                                ws.send("AUDIO_STREAM_START");
-
-                                // Thay đổi phần xử lý dữ liệu PCM từ TTS
-
-                                // Get raw PCM from Orca TTS
-                                const pcm = orcaStream.synthesize(geminiText);
-
-                                if (pcm !== null) {
-                                    // Thêm đoạn này để debug dữ liệu PCM gốc
-                                    console.log(`Dữ liệu PCM gốc: ${pcm.length} mẫu, từ ${pcm[0]} đến ${pcm[pcm.length - 1]}`);
-
-                                    // Lấy thêm dữ liệu từ buffer nếu có
-                                    const flushedPcm = orcaStream.flush();
-                                    
-                                    let finalPcmBuffer;
-                                    
-                                    if (flushedPcm !== null && flushedPcm.length > 0) {
-                                        console.log(`Dữ liệu flush bổ sung: ${flushedPcm.length} mẫu`);
-                                        
-                                        // Tạo một buffer mới kết hợp cả pcm và flushedPcm
-                                        const combinedLength = pcm.length + flushedPcm.length;
-                                        const combinedPcm = new Int16Array(combinedLength);
-                                        combinedPcm.set(pcm, 0);
-                                        combinedPcm.set(flushedPcm, pcm.length);
-                                        
-                                        // Chuyển đổi Int16Array thành Buffer đúng cách
-                                        finalPcmBuffer = Buffer.from(combinedPcm.buffer, combinedPcm.byteOffset, combinedPcm.byteLength);
-                                        console.log(`Dữ liệu PCM kết hợp: ${combinedLength} mẫu`);
-                                    } else {
-                                        // Chuyển đổi Int16Array thành Buffer đúng cách - chỉ pcm
-                                        finalPcmBuffer = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-                                    }
-
-                                    // Convert PCM to WAV format - đảm bảo header đúng
-                                    const wavHeaderBuffer = createWavHeader(finalPcmBuffer.length, {
-                                        numChannels: 1,
-                                        sampleRate: 16000,
-                                        bitsPerSample: 16
-                                    });
-
-                                    // Concatenate header and PCM data
-                                    const wavData = Buffer.concat([wavHeaderBuffer, finalPcmBuffer]);
-
-                                    // Debug: in thông tin chi tiết về file WAV
-                                    // console.log(`WAV header: ${wavHeaderBuffer.length} bytes`);
-                                    // console.log(`WAV data: ${finalPcmBuffer.length} bytes`);
-                                    // console.log(`Tổng kích thước WAV: ${wavData.length} bytes`);
-
-                                    // Lưu file để debug
-                                    // const debugOutputFile = `tts_output_${Date.now()}.wav`;
-                                    // fs.writeFileSync(debugOutputFile, wavData);
-                                    
-                                    // Tiếp tục với phần gửi audio chunks qua WebSocket như trước
-                                    const audioChunks = chunkAudioData(wavData, 2048);
-                                    console.log(`Đã chia âm thanh thành ${audioChunks.length} phần`);
-
-                                    // Thay đổi hàm sendChunks:
-                                    const sendChunks = async () => {
-                                        // Gửi các chunks như trước
-                                        for (let i = 0; i < audioChunks.length; i++) {
-                                            if (ws.readyState !== WebSocket.OPEN) {
-                                                console.log("Mất kết nối WebSocket trong quá trình gửi!");
-                                                break;
-                                            }
-
-                                            ws.send(audioChunks[i]);
-
-                                            // Tăng delay để đảm bảo xử lý đầy đủ
-                                            await new Promise(resolve => setTimeout(resolve, 50)); // Tăng từ 10ms lên 50ms
-                                        }
-
-                                        // Thêm một khoảng im lặng ngắn ở cuối để đảm bảo phát hết
-                                        if (ws.readyState === WebSocket.OPEN) {
-                                            const silenceBuffer = Buffer.alloc(1600, 0); // 50ms of silence
-                                            ws.send(silenceBuffer);
-                                            await new Promise(resolve => setTimeout(resolve, 100)); 
-                                        }
-
-                                        // Đợi thêm chút thời gian trước khi gửi tín hiệu kết thúc
-                                        await new Promise(resolve => setTimeout(resolve, 300));
-
-                                        // Báo hiệu kết thúc luồng âm thanh
-                                        if (ws.readyState === WebSocket.OPEN) {
-                                            ws.send("AUDIO_STREAM_END");
-                                            console.log("Đã gửi xong dữ liệu âm thanh.");
-                                        }
-                                    };
-
-                                    // Bắt đầu quá trình gửi
-                                    sendChunks();
-                                } else {
-                                    console.log("Orca TTS trả về dữ liệu âm thanh null");
-                                }
-
-                                console.log("Sent Gemini response and audio back to client.");
-                            } else {
-                                console.log("Client disconnected before sending Gemini response.");
-                            }
-                        } catch (error) {
-                            console.error("Error calling Gemini API:", error);
-                            if (ws.readyState === WebSocket.OPEN) {
-                                ws.send(`Error processing request: ${error.message || 'Gemini API error'}`);
-                            }
-                        } finally {
-                            // Xóa tệp tạm sau khi xử lý xong
+                        
+                        // Phần còn lại của code giữ nguyên
+                        const commandResult = detectCommand(recognizedText);
+                        
+                        if (commandResult.type === 'MUSIC') {
+                            console.log(`Music command detected for song: "${commandResult.songName}"`);
+                            await handleMusicCommand(commandResult.songName, ws);
+                        } 
+                        else if (commandResult.type === 'WEATHER') {
+                            console.log(`Weather command detected for location: "${commandResult.location}"`);
+                            await handleWeatherCommand(commandResult.location, ws);
+                        }
+                        else if (commandResult.type === 'TIME') {
+                            console.log(`Time command detected`);
+                            await handleTimeCommand(ws);
+                        }
+                        else {
+                            // No specific command detected, process with Gemini as before
                             try {
-                                fs.unlinkSync(tmpInputFile);
-                                console.log("Temporary files deleted successfully");
-                            } catch (err) {
-                                console.error("Error deleting temporary files:", err);
-                            }
+                                console.log("Sending text to Gemini...");
+                                const result = await geminiModel.generateContent(recognizedText);
+                                const response = result.response;
+                                let geminiText = response.text();
+                                console.log(`Raw Gemini Response: "${geminiText}"`);
 
-                            // Đặt lại mảng audioChunks để giải phóng bộ nhớ
-                            audioChunks = [];
-                            console.log("Audio chunks array reset");
+                                // Clean markdown formatting before sending to TTS
+                                geminiText = cleanMarkdownFormatting(geminiText);
+                                // console.log(`Cleaned Gemini Response: "${geminiText}"`);
+
+                                // Continue with existing TTS logic...
+                                if (ws.readyState === WebSocket.OPEN) {
+                                    // await sendTTSResponse("oke i'm ready to respone you", ws);
+                                    await sendTTSResponse(geminiText, ws);
+                                    console.log("Sent Gemini response and audio back to client.");
+                                } else {
+                                    console.log("Client disconnected before sending Gemini response.");
+                                }
+                            } catch (error) {
+                                console.error("Error calling Gemini API:", error);
+                                if (ws.readyState === WebSocket.OPEN) {
+                                    ws.send(`Error processing request: ${error.message || 'Gemini API error'}`);
+                                }
+                            }
                         }
                     } else {
-                        console.log("Vosk recognized empty text.");
+                        console.log("Empty transcription or error from PhoWhisper service");
                         if (ws.readyState === WebSocket.OPEN) {
-                            ws.send("Xin lỗi, tôi không nghe rõ. Vui lòng thử lại."); // Gửi phản hồi mặc định bằng tiếng Việt
+                            sendTTSResponse("Xin lỗi, tôi không nghe rõ. Vui lòng thử lại.", ws);
                         }
-                        // Đặt lại mảng audioChunks ngay cả khi không nhận dạng được
-                        audioChunks = [];
                     }
-                }
-                catch (error) {
+                } catch (error) {
                     console.error("Error processing audio:", error);
                     if (ws.readyState === WebSocket.OPEN) {
                         ws.send(`Error processing audio: ${error.message || 'Unknown error'}`);
                     }
                 } finally {
-                    // Giải phóng tài nguyên của recognizer
-                    recognizer.free();
-                    console.log('Vosk Recognizer freed after processing.');
+                    // Đặt lại mảng audioChunks để giải phóng bộ nhớ
+                    audioChunks = [];
+                    console.log("Audio chunks array reset");
                 }
-
-            } else {
-                console.log("Received unknown text message:", textMessage);
             }
         }
     });
 
     ws.on('close', () => {
-        const flushedPcm = orcaStream.flush();
-        if (flushedPcm !== null) {
-            // Gửi dữ liệu PCM còn lại cho client
-            ws.send(flushedPcm);
-            console.log(`Flushed thêm ${flushedPcm.length} mẫu PCM.`);
-        }
-        orcaStream.close(); // Đóng stream
-        orca.release(); // Giải phóng tài nguyên Orca
-
+    
         console.log('Client disconnected');
-        // Giải phóng tài nguyên của recognizer khi client ngắt kết nối
-        recognizer.free();
+        
         // Đảm bảo giải phóng bộ nhớ
         audioChunks = [];
-        console.log('Vosk Recognizer freed and audio chunks cleared.');
+        console.log('Audio chunks cleared.');
     });
-
+    
     ws.on('error', (error) => {
         console.error('WebSocket error:', error);
-        // Đảm bảo giải phóng recognizer nếu có lỗi xảy ra
-        recognizer.free();
         // Đảm bảo giải phóng bộ nhớ
         audioChunks = [];
-        console.log('Vosk Recognizer freed and audio chunks cleared due to error.');
+        console.log('Audio chunks cleared due to error.');
     });
 });
 
@@ -399,10 +520,6 @@ process.on('SIGINT', () => {
     // Đóng WebSocket server
     wss.close(() => {
         console.log("WebSocket server closed.");
-
-        // Giải phóng model Vosk
-        model.free();
-        console.log("Vosk model freed.");
 
         // Đảm bảo server đã đóng hoàn toàn
         setTimeout(() => {
