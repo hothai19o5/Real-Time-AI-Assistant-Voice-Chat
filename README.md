@@ -1,10 +1,11 @@
-# 🎙️ Real-Time AI Voice Chat using ESP32 & WebSocket
+# 🤖 Real-Time AI Voice Chat using ESP32 & WebSocket
 
 ![ESP32](https://img.shields.io/badge/ESP32-RealTime-blue)
 ![Node.js](https://img.shields.io/badge/Node.js-Server-yellowgreen)
-![Vosk](https://img.shields.io/badge/Vosk-STT-red)
+![Python](https://img.shields.io/badge/Python-Server-gray)
+![PhoWhisper](https://img.shields.io/badge/PhoWhisper-STT-red)
 ![Gemini](https://img.shields.io/badge/Gemini-AI-lightgrey)
-![Orca](https://img.shields.io/badge/Orca-TTS-blueviolet)
+![FPT](https://img.shields.io/badge/FPT-TTS-blueviolet)
 
 ## 🧠 Mô tả dự án
 
@@ -12,9 +13,9 @@
 
 - ESP32 (thu & phát âm thanh)
 - WebSocket (giao tiếp thời gian thực)
-- Vosk (speech-to-text)
+- PhoWhisper (speech-to-text)
 - Gemini (AI chatbot)
-- Orca của Picovoice (text-to-speech)
+- FPT API (text-to-speech)
 
 Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 
@@ -29,9 +30,11 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 
 ### 🖥️ Server (Node.js)
 - Nhận dữ liệu âm thanh từ ESP32 qua WebSocket
-- Chuyển giọng nói thành văn bản bằng Vosk STT
-- Gửi văn bản tới Gemini (Google AI) để nhận phản hồi
-- Chuyển phản hồi thành giọng nói với Orca (Picovoice)
+- Chuyển giọng nói thành văn bản bằng PhoWhisper STT
+- Nhận dạng đó là lệnh hay là câu hỏi
+- Nếu là các lệnh Hỏi giờ, Xem thời tiết, Phát nhạc thì Server sẽ xử lý
+- Gửi câu hỏi text tới Gemini (Google AI) để nhận phản hồi
+- Chuyển phản hồi thành giọng nói với FPT API
 - Gửi lại âm thanh về ESP32 để phát ra loa
 
 ---
@@ -39,14 +42,18 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 ## 📁 Cấu trúc thư mục
     real-time-voice-chat
     ├── serverNodeJsAi/
+    │   ├── node_modules
     │   ├── .env
     │   ├── package-lock.json
     │   ├── package.json
     │   └── server.js                   # WebSocket server
+    ├── phowhisper_service/
+    │   ├── models/                     # Speech-to-Text model
+    │   ├── app.py                      # Speech-to-Text
+    │   └── requirements.txt                   
     ├── aiAssistantVoice/
-    │   └── aiAssistantVoice.ino        # Esp32
-    ├── vosk-model-small-en-us-0.15/    # Text-to-Speech module
-    ├── vosk-model-vn-0.4/              # Text-to-Speech module
+    │   └── aiAssistantVoice.ino        # Esp32 C++
+    ├── .gitignore
     └── README.md
 ---
 
@@ -58,22 +65,22 @@ Cài các dependency:
 ```bash
 cd .\serverNodeJsAi\
 npm install
+cd .\phowhisper_service\
+pip install -r requirements.txt
 ```
-Cài đặt mô hình Vosk:
 
-Tải mô hình tiếng Việt (hoặc English):
-https://alphacephei.com/vosk/models
-
-Thiết lập API key cho Gemini và Picovoice (Orca)
+Thiết lập API key cho Gemini, FPT TTS và Weather
 
 Tạo file .env:
 ```ini
 GEMINI_API_KEY=your_gemini_api_key
-PICOVOICE_ACCESS_KEY=your_orca_api_key
+FPT_TTS_API_KEY=your_fpt_tts_api_key
+WEATHER_API_KEY=your_weather_api_key
 ```
 Chạy server:
 ```bash
 node .\server.js
+python app.py
 ```
 ### 📲 ESP32
 Cài đặt các thư viện cần thiết
@@ -88,5 +95,5 @@ Sử dụng Arduino IDE
 
 Kết nối phần cứng:
 
+    Continue Updating
 ...
-
