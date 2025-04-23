@@ -2,220 +2,243 @@
 #include <WebSocketsClient.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"  // Thêm thư viện Queue
+#include "freertos/queue.h" // Thêm thư viện Queue
 #include "driver/i2s.h"
-#include "esp_idf_version.h"  // Để kiểm tra phiên bản IDF (cho i2s_driver_install)
+#include "esp_idf_version.h" // Để kiểm tra phiên bản IDF (cho i2s_driver_install)
 
-// --- Cấu hình WiFi ---
-const char* ssid = "B10509_2.4G";
-const char* password = "509509509";
+// --- Cấu hình WiFi Hardcode---
+// Nên sửa lại dùng WiFiManager để tự động kết nối với WiFi
+const char *ssid = "B10509_2.4G";
+const char *password = "509509509";
 
-// --- Cấu hình Server ---
-const char* websockets_server_host = "192.168.1.22";
+// --- Cấu hình Server Hardcode---
+// Nên sửa lại để có thể config được thông tin này từ 1 WebServer
+const char *websockets_server_host = "192.168.1.22";
 const uint16_t websockets_server_port = 8080;
-const char* websockets_path = "/";
+const char *websockets_path = "/";
 
 // --- Cấu hình I2S ---
-#define I2S_WS 15
+#define I2S_WS 15 // Chân WS và LRC
 #define I2S_SD_IN 32
-#define I2S_SD_OUT 25  // !!! CHÂN MỚI: Chân Serial Data OUT (Tới MAX98357A) !!! - Chọn chân phù hợp
-#define I2S_SCK 14
-#define SPEAKER_SD_PIN 26  // Chân Shutdown cho loa MAX98357A
+#define I2S_SD_OUT 25
+#define I2S_SCK 14        // Chân SCK và BCLK
+#define SPEAKER_SD_PIN 26 // Chân Shutdown cho loa MAX98357A
 #define I2S_PORT I2S_NUM_0
-#define I2S_SAMPLE_RATE (16000)
-#define I2S_BITS_PER_SAMPLE_RX I2S_BITS_PER_SAMPLE_32BIT
-#define I2S_READ_LEN (1024 * 4)
-#define I2S_BITS_PER_SAMPLE_TX I2S_BITS_PER_SAMPLE_16BIT
-#define SPEAKER_CHANNEL_FMT I2S_CHANNEL_FMT_ONLY_LEFT
-#define MIC_CHANNEL_FMT I2S_CHANNEL_FMT_ONLY_LEFT
-#define I2S_BUFFER_COUNT 8
+#define I2S_SAMPLE_RATE (16000)                          // Tốc độ lấy mẫu, sử dụng 16kHz để giảm dữ liệu
+#define I2S_BITS_PER_SAMPLE_RX I2S_BITS_PER_SAMPLE_32BIT // Số bit mỗi mẫu ghi âm INMP441
+#define I2S_READ_LEN (1024 * 4)                          // Độ dài buffer khi đọc dữ liệu, mỗi lần đọc 4KB từ mic
+#define I2S_BITS_PER_SAMPLE_TX I2S_BITS_PER_SAMPLE_16BIT // Số bit mỗi mẫu phát MAX98357A
+#define SPEAKER_CHANNEL_FMT I2S_CHANNEL_FMT_ONLY_LEFT    // Chỉ sử dụng kênh trái cho MAX98357A
+#define MIC_CHANNEL_FMT I2S_CHANNEL_FMT_ONLY_LEFT        // Chỉ sử dụng kênh trái cho mic INMP441
+#define I2S_BUFFER_COUNT 8                               // Số lượng buffer DMA cho I2S
 
-// --- Cấu hình Ghi âm ---
-#define RECORD_DURATION_MS 5000
+#define RECORD_DURATION_MS 5000 // Thời gian ghi âm, cố định 5s, sẽ nâng cấp sau
 
 // --- Cấu hình Playback ---
-#define PLAYBACK_QUEUE_LENGTH 10
-#define PLAYBACK_QUEUE_ITEM_SIZE (I2S_READ_LEN / 2)  // Kích thước tối đa ước tính
-#define PLAYBACK_TASK_STACK_SIZE 4096
+#define AUDIO_PLAYBACK_QUEUE_LENGTH 16      // Số lượng chunk tối đa trong hàng đợi phát lại
+#define AUDIO_PLAYBACK_QUEUE_ITEM_SIZE 2048 // Kích thước mỗi chunk trong hàng đợi phát lại (16-bit PCM)
+#define AUDIO_PLAYBACK_TASK_STACK_SIZE 4096 // Kích thước stack cho task phát lại
 
 #define PIN_BUTTON 4  // Chân nút nhấn ghi âm
+#define LED_RECORD 17 // LED báo đang ghi âm
+#define LED_PLAY 16   // LED báo đang phát
 
-#define LED_RECORD 17
-#define LED_PLAY 16          // !!! LED MỚI: LED báo đang phát (Tùy chọn) !!! - Chọn chân phù hợp
-#define MIC_GAIN_FACTOR 4.0  // Hệ số khuếch đại microphone, điều chỉnh theo nhu cầu
+#define MIC_GAIN_FACTOR 4.0 // Hệ số khuếch đại microphone, khuếch đại để server xử lý dễ hơn
 
-// *** SỬA 1: Di chuyển định nghĩa AudioChunk lên đây ***
-// Định nghĩa cấu trúc để gửi vào Queue Playback
-typedef struct {
-  uint8_t* data;
+bool buttonPressed = false; // Biến để theo dõi trạng thái nút nhấn
+// Khi nhấn nút thì tín hiệu sẽ không chuyển từ Low -> High luôn mà sẽ thay đổi trạng thái từ Low -> High -> Low -> High -> Low
+// Cách xử lý: Khi nhấn nút thì sẽ ghi nhận trạng thái nhấn nút, sau đó sẽ kiểm tra thời gian thay đổi trạng thái nút nhấn
+// Nếu thời gian thay đổi trạng thái lớn hơn DEBOUNCE_TIME thì sẽ ghi nhận là nhấn nút
+unsigned long lastButtonChangeTime = 0; // Thời gian thay đổi trạng thái nút nhấn, tính toán chống dội
+#define DEBOUNCE_TIME 50                // Thời gian chống dội (50ms)
+
+// Biến để theo dõi chế độ I2S hiện tại
+// Mic sử dụng 32-bit, Speaker sử dụng 16-bit => không dùng chung được 1 lần khởi tạo I2S
+// Mỗi lần muốn sử dụng cái nào thì cần khởi tạo lại I2S
+volatile current_i2s_mode_t current_i2s_mode = I2S_MODE_NONE;
+
+// Mutex để bảo vệ việc thay đổi cấu hình I2S
+// Mutex này sẽ đảm bảo rằng chỉ có một task có thể thay đổi cấu hình I2S tại một thời điểm
+// Điều này rất quan trọng vì việc thay đổi cấu hình I2S có thể mất thời gian và nếu có nhiều task cùng thay đổi cấu hình
+SemaphoreHandle_t i2s_mutex = NULL;
+
+WebSocketsClient webSocket;             // Khởi tạo WebSocket client
+bool isRecording = false;               // Biến để theo dõi trạng thái ghi âm
+unsigned long recordingStartTime = 0;   // Thời gian bắt đầu ghi âm
+TaskHandle_t recordTaskHandle = NULL;   // Task ghi âm
+TaskHandle_t playbackTaskHandle = NULL; // Task phát âm thanh
+QueueHandle_t playbackQueue = NULL;     // Hàng đợi phát âm thanh
+
+// Định nghĩa cấu trúc để gửi vào hàng đợi phát âm thanh
+typedef struct
+{
+  uint8_t *data;
   size_t length;
 } AudioChunk;
 
-// Add at the top with other global variables
-bool buttonPressed = false;
-unsigned long lastButtonChangeTime = 0;
-#define DEBOUNCE_TIME 50  // 50ms debounce time
-
 // --- Theo dõi trạng thái I2S hiện tại ---
-typedef enum {
+typedef enum
+{
   I2S_MODE_NONE,
   I2S_MODE_MIC,
   I2S_MODE_SPEAKER
 } current_i2s_mode_t;
 
-// Biến để theo dõi chế độ I2S hiện tại
-volatile current_i2s_mode_t current_i2s_mode = I2S_MODE_NONE;
-
-// Mutex để bảo vệ việc thay đổi cấu hình I2S
-SemaphoreHandle_t i2s_mutex = NULL;
-
-// --- Biến Global ---
-WebSocketsClient webSocket;
-bool isRecording = false;
-unsigned long recordingStartTime = 0;
-TaskHandle_t recordTaskHandle = NULL;
-TaskHandle_t playbackTaskHandle = NULL;
-QueueHandle_t playbackQueue = NULL;
-
 // --- Hàm xử lý WebSocket ---
-void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
-  switch (type) {
-    case WStype_DISCONNECTED:
-      Serial.println("[WSc] Disconnected!");
+void webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
+{
+  switch (type)
+  {
+  case WStype_DISCONNECTED:
+    Serial.println("[WSc] Disconnected!");
+    digitalWrite(LED_PLAY, LOW);
+    // Xử lý ngắt kết nối - đảm bảo tắt ghi âm nếu đang ghi
+    isRecording = false;
+    // Đặt về chế độ NONE khi mất kết nối
+    switch_i2s_mode(I2S_MODE_NONE);
+    // Xóa queue để tránh phát lại dữ liệu cũ khi kết nối lại
+    if (playbackQueue != NULL)
+    {
+      // Xóa sạch các chunk trong queue để tránh rò rỉ bộ nhớ
+      AudioChunk *chunk = NULL;
+      while (xQueueReceive(playbackQueue, &chunk, 0) == pdTRUE)
+      {
+        if (chunk)
+        {
+          if (chunk->data)
+            free(chunk->data);
+          free(chunk);
+        }
+      }
+      xQueueReset(playbackQueue);
+    }
+    break;
+  case WStype_CONNECTED:
+    Serial.printf("[WSc] Connected to url: %s\n", payload);
+    break;
+  case WStype_TEXT:
+    if (strcmp((char *)payload, "AUDIO_STREAM_START") == 0)
+    {
+      digitalWrite(LED_PLAY, HIGH);
+      Serial.println("Playback starting command received.");
+    }
+    else if (strcmp((char *)payload, "AUDIO_STREAM_END") == 0)
+    {
       digitalWrite(LED_PLAY, LOW);
-      // Xử lý ngắt kết nối - đảm bảo tắt ghi âm nếu đang ghi
-      isRecording = false;
-      // Đặt về chế độ NONE khi mất kết nối
-      switch_i2s_mode(I2S_MODE_NONE);
-      // Xóa queue để tránh phát lại dữ liệu cũ khi kết nối lại
-      if (playbackQueue != NULL) {
-        // Xóa sạch các chunk trong queue để tránh rò rỉ bộ nhớ
-        AudioChunk* chunk = NULL;
-        while (xQueueReceive(playbackQueue, &chunk, 0) == pdTRUE) {
-          if (chunk) {
-            if (chunk->data) free(chunk->data);
-            free(chunk);
-          }
-        }
-        xQueueReset(playbackQueue);
-      }
-      break;
-    case WStype_CONNECTED:
-      Serial.printf("[WSc] Connected to url: %s\n", payload);
-      break;
-    case WStype_TEXT:
-      // Serial.printf("[WSc] Received text: %s\n", payload);
-      if (strcmp((char*)payload, "AUDIO_STREAM_START") == 0) {
-        digitalWrite(LED_PLAY, HIGH);
-        Serial.println("Playback starting command received.");
-      } else if (strcmp((char*)payload, "AUDIO_STREAM_END") == 0) {
-        digitalWrite(LED_PLAY, LOW);
-        Serial.println("Playback ending command received.");
-      }
-      break;
-    case WStype_BIN:
-      if (playbackQueue != NULL && length > 0) {
-        static bool firstChunk = true;
-        uint8_t* audioData = payload;
-        size_t audioLength = length;
+      Serial.println("Playback ending command received.");
+    }
+    break;
+  case WStype_BIN:
+    if (playbackQueue != NULL && length > 0)
+    {
+      static bool firstChunk = true;
+      uint8_t *audioData = payload;
+      size_t audioLength = length;
 
-        // Kiểm tra header WAV ở chunk đầu tiên
-        if (firstChunk && length > 44 && payload[0] == 'R' && payload[1] == 'I' && payload[2] == 'F' && payload[3] == 'F') {
-          // Kiểm tra thông tin WAV header
-          uint16_t bits_per_sample = *(uint16_t*)&payload[34];
-          uint32_t sample_rate = *(uint32_t*)&payload[24];
-          uint16_t channels = *(uint16_t*)&payload[22];
-          Serial.printf("WAV Header - Sample Rate: %u Hz, Bits per Sample: %u, Channels: %u\n",
-                        sample_rate, bits_per_sample, channels);
-          if (bits_per_sample != 16 || sample_rate != I2S_SAMPLE_RATE || channels != 1) {
-            Serial.println("Dữ liệu WAV không đúng định dạng (yêu cầu 16-bit, 16kHz, mono)!");
-            firstChunk = false;
-            break;
-          }
-          Serial.println("Phát hiện header WAV, bỏ qua 44 bytes đầu tiên");
-          audioData = payload + 44;
-          audioLength = length - 44;
+      // Kiểm tra header WAV ở chunk đầu tiên
+      if (firstChunk && length > 44 && payload[0] == 'R' && payload[1] == 'I' && payload[2] == 'F' && payload[3] == 'F')
+      {
+        // Kiểm tra thông tin WAV header
+        uint16_t bits_per_sample = *(uint16_t *)&payload[34];
+        uint32_t sample_rate = *(uint32_t *)&payload[24];
+        uint16_t channels = *(uint16_t *)&payload[22];
+        Serial.printf("WAV Header - Sample Rate: %u Hz, Bits per Sample: %u, Channels: %u\n",
+                      sample_rate, bits_per_sample, channels);
+        if (bits_per_sample != 16 || sample_rate != I2S_SAMPLE_RATE || channels != 1)
+        {
+          Serial.println("Dữ liệu WAV không đúng định dạng (yêu cầu 16-bit, 16kHz, mono)!");
           firstChunk = false;
-        } else if (firstChunk) {
-          // Chunk đầu tiên nhưng không phải WAV header
-          firstChunk = false;
-        }
-
-        // Cấp phát bộ nhớ cho cấu trúc AudioChunk
-        AudioChunk* chunk = (AudioChunk*)malloc(sizeof(AudioChunk));
-        if (!chunk) {
-          Serial.println("Không thể cấp phát bộ nhớ cho AudioChunk!");
           break;
         }
-
-        // Cấp phát bộ nhớ cho dữ liệu âm thanh và sao chép payload
-        chunk->data = (uint8_t*)malloc(audioLength);
-        if (!chunk->data) {
-          Serial.println("Không thể cấp phát bộ nhớ cho dữ liệu âm thanh!");
-          free(chunk);
-          break;
-        }
-
-        memcpy(chunk->data, audioData, audioLength);
-        chunk->length = audioLength;
-
-        // Gửi vào queue để phát, tăng timeout để tránh bỏ qua chunk
-        if (xQueueSend(playbackQueue, &chunk, pdMS_TO_TICKS(100)) != pdTRUE) {
-          Serial.println("Hàng đợi phát lại đầy! Loại bỏ chunk.");
-          free(chunk->data);
-          free(chunk);
-        }
+        Serial.println("Phát hiện header WAV, bỏ qua 44 bytes đầu tiên");
+        audioData = payload + 44;
+        audioLength = length - 44;
+        firstChunk = false;
       }
-      break;
-    // ... các case khác ...
-    case WStype_ERROR:
-    case WStype_FRAGMENT_TEXT_START:
-    case WStype_FRAGMENT_BIN_START:
-    case WStype_FRAGMENT:
-    case WStype_FRAGMENT_FIN:
-    case WStype_PING:
-    case WStype_PONG:
-      break;
+      else if (firstChunk)
+      {
+        // Chunk đầu tiên nhưng không phải WAV header
+        firstChunk = false;
+      }
+
+      // Cấp phát bộ nhớ cho cấu trúc AudioChunk
+      AudioChunk *chunk = (AudioChunk *)malloc(sizeof(AudioChunk));
+      if (!chunk)
+      {
+        Serial.println("Không thể cấp phát bộ nhớ cho AudioChunk!");
+        break;
+      }
+
+      // Cấp phát bộ nhớ cho dữ liệu âm thanh và sao chép payload
+      chunk->data = (uint8_t *)malloc(audioLength);
+      if (!chunk->data)
+      {
+        Serial.println("Không thể cấp phát bộ nhớ cho dữ liệu âm thanh!");
+        free(chunk);
+        break;
+      }
+
+      memcpy(chunk->data, audioData, audioLength);
+      chunk->length = audioLength;
+
+      // Gửi vào queue để phát, tăng timeout để tránh bỏ qua chunk
+      if (xQueueSend(playbackQueue, &chunk, pdMS_TO_TICKS(100)) != pdTRUE)
+      {
+        Serial.println("Hàng đợi phát lại đầy! Loại bỏ chunk.");
+        free(chunk->data);
+        free(chunk);
+      }
+    }
+    break;
+  // ... các case khác ...
+  case WStype_ERROR:
+  case WStype_FRAGMENT_TEXT_START:
+  case WStype_FRAGMENT_BIN_START:
+  case WStype_FRAGMENT:
+  case WStype_FRAGMENT_FIN:
+  case WStype_PING:
+  case WStype_PONG:
+    break;
   }
 }
 
 // --- Hàm cấu hình I2S ---
-esp_err_t i2s_install() {
-  // (Giữ nguyên nội dung hàm i2s_install như trước)
+esp_err_t i2s_install()
+{
   i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_TX),
-    .sample_rate = I2S_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_RX,  // Đặt là 32bit để đọc INMP441
+      .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_TX),
+      .sample_rate = I2S_SAMPLE_RATE,
+      .bits_per_sample = I2S_BITS_PER_SAMPLE_RX, // Đặt là 32bit để đọc INMP441
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+      .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
 #else
-    .channel_format = MIC_CHANNEL_FMT,
+      .channel_format = MIC_CHANNEL_FMT,
 #endif
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = I2S_BUFFER_COUNT,
-    .dma_buf_len = I2S_READ_LEN / I2S_BUFFER_COUNT,
-    .use_apll = false,
-    .tx_desc_auto_clear = true,
-    .fixed_mclk = 0
-  };
+      .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+      .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+      .dma_buf_count = I2S_BUFFER_COUNT,
+      .dma_buf_len = I2S_READ_LEN / I2S_BUFFER_COUNT,
+      .use_apll = false,
+      .tx_desc_auto_clear = true,
+      .fixed_mclk = 0};
 
   esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Failed to install I2S driver. Error: %d (%s)\n", err, esp_err_to_name(err));
     return err;
   }
   Serial.println("I2S Driver installed.");
 
   i2s_pin_config_t pin_config = {
-    .bck_io_num = I2S_SCK,
-    .ws_io_num = I2S_WS,
-    .data_out_num = I2S_SD_OUT,
-    .data_in_num = I2S_SD_IN
-  };
+      .bck_io_num = I2S_SCK,
+      .ws_io_num = I2S_WS,
+      .data_out_num = I2S_SD_OUT,
+      .data_in_num = I2S_SD_IN};
 
   err = i2s_set_pin(I2S_PORT, &pin_config);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Failed to set I2S pins. Error: %d (%s)\n", err, esp_err_to_name(err));
     i2s_driver_uninstall(I2S_PORT);
     return err;
@@ -223,7 +246,8 @@ esp_err_t i2s_install() {
   Serial.println("I2S Pins configured.");
 
   err = i2s_set_sample_rates(I2S_PORT, I2S_SAMPLE_RATE);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Failed to set I2S sample rate. Error: %d (%s)\n", err, esp_err_to_name(err));
     i2s_driver_uninstall(I2S_PORT);
     return err;
@@ -236,9 +260,11 @@ esp_err_t i2s_install() {
 }
 
 // --- Hàm hủy cài đặt I2S ---
-esp_err_t i2s_uninstall() {
+esp_err_t i2s_uninstall()
+{
   esp_err_t err = i2s_driver_uninstall(I2S_PORT);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Failed to uninstall I2S driver. Error: %d (%s)\n", err, esp_err_to_name(err));
     return err;
   }
@@ -247,45 +273,46 @@ esp_err_t i2s_uninstall() {
 }
 
 // --- Hàm cấu hình I2S cho microphone (32-bit) ---
-esp_err_t i2s_install_mic() {
+esp_err_t i2s_install_mic()
+{
 
   // Tắt loa khi chuyển sang chế độ microphone
-  digitalWrite(SPEAKER_SD_PIN, LOW);  // Đặt chân SD ở mức LOW để tắt loa
+  digitalWrite(SPEAKER_SD_PIN, LOW); // Đặt chân SD ở mức LOW để tắt loa
 
   i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-    .sample_rate = I2S_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_RX,  // 32-bit cho INMP441
+      .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+      .sample_rate = I2S_SAMPLE_RATE,
+      .bits_per_sample = I2S_BITS_PER_SAMPLE_RX, // 32-bit cho INMP441
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+      .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
 #else
-    .channel_format = MIC_CHANNEL_FMT,
+      .channel_format = MIC_CHANNEL_FMT,
 #endif
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = I2S_BUFFER_COUNT,
-    .dma_buf_len = I2S_READ_LEN / I2S_BUFFER_COUNT,
-    .use_apll = false,
-    .tx_desc_auto_clear = true,
-    .fixed_mclk = 0
-  };
+      .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+      .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+      .dma_buf_count = I2S_BUFFER_COUNT,
+      .dma_buf_len = I2S_READ_LEN / I2S_BUFFER_COUNT,
+      .use_apll = false,
+      .tx_desc_auto_clear = true,
+      .fixed_mclk = 0};
 
   esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Failed to install I2S driver for mic. Error: %d (%s)\n", err, esp_err_to_name(err));
     return err;
   }
   Serial.println("I2S Driver for mic installed.");
 
   i2s_pin_config_t pin_config = {
-    .bck_io_num = I2S_SCK,
-    .ws_io_num = I2S_WS,
-    .data_out_num = -1,  // Không dùng output khi thu âm
-    .data_in_num = I2S_SD_IN
-  };
+      .bck_io_num = I2S_SCK,
+      .ws_io_num = I2S_WS,
+      .data_out_num = -1, // Không dùng output khi thu âm
+      .data_in_num = I2S_SD_IN};
 
   err = i2s_set_pin(I2S_PORT, &pin_config);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Failed to set I2S pins for mic. Error: %d (%s)\n", err, esp_err_to_name(err));
     i2s_driver_uninstall(I2S_PORT);
     return err;
@@ -297,45 +324,47 @@ esp_err_t i2s_install_mic() {
 }
 
 // --- Hàm cấu hình I2S cho loa (16-bit) ---
-esp_err_t i2s_install_speaker() {
+esp_err_t i2s_install_speaker()
+{
 
   // Bật loa khi chuyển sang chế độ speaker
-  digitalWrite(SPEAKER_SD_PIN, HIGH);  // Đặt chân SD ở mức HIGH để bật loa
+  digitalWrite(SPEAKER_SD_PIN, HIGH); // Đặt chân SD ở mức HIGH để bật loa
 
   i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
-    .sample_rate = I2S_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_TX,  // 16-bit cho MAX98357A
+      .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+      .sample_rate = I2S_SAMPLE_RATE,
+      .bits_per_sample = I2S_BITS_PER_SAMPLE_TX, // 16-bit cho MAX98357A
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 2, 0)
-    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+      .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
 #else
-    .channel_format = SPEAKER_CHANNEL_FMT,
+      .channel_format = SPEAKER_CHANNEL_FMT,
 #endif
-    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = I2S_BUFFER_COUNT,
-    .dma_buf_len = I2S_READ_LEN / I2S_BUFFER_COUNT,
-    .use_apll = false,
-    .tx_desc_auto_clear = true,
-    .fixed_mclk = 0
-  };
+      .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+      .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+      .dma_buf_count = I2S_BUFFER_COUNT,
+      .dma_buf_len = I2S_READ_LEN / I2S_BUFFER_COUNT,
+      .use_apll = false,
+      .tx_desc_auto_clear = true,
+      .fixed_mclk = 0};
 
   esp_err_t err = i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Failed to install I2S driver for speaker. Error: %d (%s)\n", err, esp_err_to_name(err));
     return err;
   }
   Serial.println("I2S Driver for speaker installed.");
 
   i2s_pin_config_t pin_config = {
-    .bck_io_num = I2S_SCK,
-    .ws_io_num = I2S_WS,
-    .data_out_num = I2S_SD_OUT,
-    .data_in_num = -1  // Không dùng input khi phát âm thanh
+      .bck_io_num = I2S_SCK,
+      .ws_io_num = I2S_WS,
+      .data_out_num = I2S_SD_OUT,
+      .data_in_num = -1 // Không dùng input khi phát âm thanh
   };
 
   err = i2s_set_pin(I2S_PORT, &pin_config);
-  if (err != ESP_OK) {
+  if (err != ESP_OK)
+  {
     Serial.printf("Failed to set I2S pins for speaker. Error: %d (%s)\n", err, esp_err_to_name(err));
     i2s_driver_uninstall(I2S_PORT);
     return err;
@@ -347,22 +376,27 @@ esp_err_t i2s_install_speaker() {
 }
 
 // --- Hàm chuyển đổi chế độ I2S ---
-esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
-  if (xSemaphoreTake(i2s_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode)
+{
+  if (xSemaphoreTake(i2s_mutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+  {
     Serial.println("Failed to get I2S mutex. Cannot switch mode.");
     return ESP_FAIL;
   }
 
   // Nếu chế độ mới giống chế độ hiện tại, không cần làm gì
-  if (current_i2s_mode == new_mode) {
+  if (current_i2s_mode == new_mode)
+  {
     xSemaphoreGive(i2s_mutex);
     return ESP_OK;
   }
 
   // Hủy cài đặt I2S hiện tại (nếu có)
-  if (current_i2s_mode != I2S_MODE_NONE) {
+  if (current_i2s_mode != I2S_MODE_NONE)
+  {
     esp_err_t err = i2s_uninstall();
-    if (err != ESP_OK) {
+    if (err != ESP_OK)
+    {
       xSemaphoreGive(i2s_mutex);
       return err;
     }
@@ -370,31 +404,34 @@ esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
 
   // Cấu hình I2S theo chế độ mới
   esp_err_t result = ESP_OK;
-  switch (new_mode) {
-    case I2S_MODE_MIC:
-      result = i2s_install_mic();
-      if (result == ESP_OK) {
-        current_i2s_mode = I2S_MODE_MIC;
-        Serial.println("I2S switched to microphone mode (32-bit)");
-      }
-      break;
+  switch (new_mode)
+  {
+  case I2S_MODE_MIC:
+    result = i2s_install_mic();
+    if (result == ESP_OK)
+    {
+      current_i2s_mode = I2S_MODE_MIC;
+      Serial.println("I2S switched to microphone mode (32-bit)");
+    }
+    break;
 
-    case I2S_MODE_SPEAKER:
-      result = i2s_install_speaker();
-      if (result == ESP_OK) {
-        current_i2s_mode = I2S_MODE_SPEAKER;
-        Serial.println("I2S switched to speaker mode (16-bit)");
-      }
-      break;
+  case I2S_MODE_SPEAKER:
+    result = i2s_install_speaker();
+    if (result == ESP_OK)
+    {
+      current_i2s_mode = I2S_MODE_SPEAKER;
+      Serial.println("I2S switched to speaker mode (16-bit)");
+    }
+    break;
 
-    case I2S_MODE_NONE:
-      current_i2s_mode = I2S_MODE_NONE;
-      Serial.println("I2S switched to none mode");
-      break;
+  case I2S_MODE_NONE:
+    current_i2s_mode = I2S_MODE_NONE;
+    Serial.println("I2S switched to none mode");
+    break;
 
-    default:
-      Serial.println("Unknown I2S mode requested");
-      result = ESP_FAIL;
+  default:
+    Serial.println("Unknown I2S mode requested");
+    result = ESP_FAIL;
   }
 
   xSemaphoreGive(i2s_mutex);
@@ -402,11 +439,13 @@ esp_err_t switch_i2s_mode(current_i2s_mode_t new_mode) {
 }
 
 // --- Task ghi âm và gửi đi ---
-void recordAndSendTask(void* parameter) {
+void recordAndSendTask(void *parameter)
+{
   Serial.println("Recording task started...");
 
   // Chuyển I2S sang chế độ mic
-  if (switch_i2s_mode(I2S_MODE_MIC) != ESP_OK) {
+  if (switch_i2s_mode(I2S_MODE_MIC) != ESP_OK)
+  {
     Serial.println("Failed to configure I2S for recording. Exiting task.");
     isRecording = false;
     recordTaskHandle = NULL;
@@ -414,22 +453,24 @@ void recordAndSendTask(void* parameter) {
     return;
   }
 
-  int32_t* i2s_read_buffer = NULL;
-  int16_t* pcm_send_buffer = NULL;
+  int32_t *i2s_read_buffer = NULL;
+  int16_t *pcm_send_buffer = NULL;
 
   size_t bytes_read = 0;
   size_t bytes_to_send = 0;
 
   // Cấp phát bộ đệm đọc (32-bit)
-  i2s_read_buffer = (int32_t*)malloc(I2S_READ_LEN);
-  if (!i2s_read_buffer) {
+  i2s_read_buffer = (int32_t *)malloc(I2S_READ_LEN);
+  if (!i2s_read_buffer)
+  {
     Serial.println("Failed to allocate memory for I2S read buffer!");
     goto cleanup;
   }
 
   // Cấp phát bộ đệm gửi (16-bit)
-  pcm_send_buffer = (int16_t*)malloc(I2S_READ_LEN / 2);
-  if (!pcm_send_buffer) {
+  pcm_send_buffer = (int16_t *)malloc(I2S_READ_LEN / 2);
+  if (!pcm_send_buffer)
+  {
     Serial.println("Failed to allocate memory for PCM send buffer!");
     goto cleanup;
   }
@@ -439,34 +480,47 @@ void recordAndSendTask(void* parameter) {
   digitalWrite(LED_RECORD, HIGH);
 
   // Ghi âm trong khoảng thời gian cố định là 5 giây
-  while (isRecording && (millis() - recordingStartTime < RECORD_DURATION_MS)) {
+  while (isRecording && (millis() - recordingStartTime < RECORD_DURATION_MS))
+  {
     esp_err_t read_result = i2s_read(I2S_PORT, i2s_read_buffer, I2S_READ_LEN, &bytes_read, pdMS_TO_TICKS(1000));
 
-    if (read_result == ESP_OK && bytes_read > 0) {
+    if (read_result == ESP_OK && bytes_read > 0)
+    {
       // Phần xử lý âm thanh giữ nguyên
       int samples_read = bytes_read / 4;
       bytes_to_send = samples_read * 2;
 
-      for (int i = 0; i < samples_read; i++) {
+      for (int i = 0; i < samples_read; i++)
+      {
         int32_t sample = i2s_read_buffer[i] >> 16;
         sample = (int32_t)(sample * MIC_GAIN_FACTOR);
 
-        if (sample > 32767) sample = 32767;
-        if (sample < -32768) sample = -32768;
+        if (sample > 32767)
+          sample = 32767;
+        if (sample < -32768)
+          sample = -32768;
 
         pcm_send_buffer[i] = (int16_t)sample;
       }
 
-      if (webSocket.isConnected()) {
-        if (!webSocket.sendBIN((uint8_t*)pcm_send_buffer, bytes_to_send)) {
+      if (webSocket.isConnected())
+      {
+        if (!webSocket.sendBIN((uint8_t *)pcm_send_buffer, bytes_to_send))
+        {
           Serial.println("WebSocket sendBIN failed!");
         }
-      } else {
+      }
+      else
+      {
         Serial.println("WebSocket disconnected during recording.");
       }
-    } else if (read_result == ESP_ERR_TIMEOUT) {
+    }
+    else if (read_result == ESP_ERR_TIMEOUT)
+    {
       Serial.println("I2S Read Timeout!");
-    } else {
+    }
+    else
+    {
       Serial.printf("I2S Read Error: %d (%s)\n", read_result, esp_err_to_name(read_result));
       isRecording = false;
     }
@@ -478,10 +532,13 @@ cleanup:
   digitalWrite(LED_RECORD, LOW);
   isRecording = false;
 
-  if (i2s_read_buffer) free(i2s_read_buffer);
-  if (pcm_send_buffer) free(pcm_send_buffer);
+  if (i2s_read_buffer)
+    free(i2s_read_buffer);
+  if (pcm_send_buffer)
+    free(pcm_send_buffer);
 
-  if (webSocket.isConnected()) {
+  if (webSocket.isConnected())
+  {
     webSocket.sendTXT("END_OF_STREAM");
     Serial.println("Sent END_OF_STREAM");
   }
@@ -495,22 +552,28 @@ cleanup:
 }
 
 // --- Task phát âm thanh ---
-void playbackTask(void* parameter) {
+void playbackTask(void *parameter)
+{
   Serial.println("Playback task started...");
-  AudioChunk* chunk = NULL;
+  AudioChunk *chunk = NULL;
   size_t bytes_written = 0;
   bool speaker_mode_active = false;
   unsigned long lastAudioTime = 0;
 
-  while (true) {
-    if (xQueueReceive(playbackQueue, &chunk, pdMS_TO_TICKS(1000)) == pdPASS) {
+  while (true)
+  {
+    if (xQueueReceive(playbackQueue, &chunk, pdMS_TO_TICKS(1000)) == pdPASS)
+    {
       // Có âm thanh cần phát - Cập nhật thời gian nhận audio gần nhất
       lastAudioTime = millis();
 
-      if (chunk && chunk->data && chunk->length > 0) {
+      if (chunk && chunk->data && chunk->length > 0)
+      {
         // Chỉ chuyển sang chế độ loa khi cần phát âm thanh
-        if (!speaker_mode_active) {
-          if (switch_i2s_mode(I2S_MODE_SPEAKER) != ESP_OK) {
+        if (!speaker_mode_active)
+        {
+          if (switch_i2s_mode(I2S_MODE_SPEAKER) != ESP_OK)
+          {
             Serial.println("Failed to configure I2S for playback. Skipping chunk.");
             free(chunk->data);
             free(chunk);
@@ -521,22 +584,25 @@ void playbackTask(void* parameter) {
           Serial.println("Speaker mode activated");
         }
 
-        // --- GIẢM ÂM LƯỢNG 50% ---
-        // Giả định dữ liệu là 16-bit PCM (2 byte mỗi mẫu)
-        int16_t* audio_samples = (int16_t*)chunk->data;
-        int samples_count = chunk->length / 2;  // Số lượng mẫu 16-bit
-
+        // --- TĂNG GIẢM ÂM LƯỢNG ---
+        // Dữ liệu là 16-bit PCM (2 byte mỗi mẫu)
+        int16_t *audio_samples = (int16_t *)chunk->data;
+        int samples_count = chunk->length / 2; // Số lượng mẫu 16-bit
         // Điều chỉnh biên độ của mỗi mẫu âm thanh
-        for (int i = 0; i < samples_count; i++) {
-          audio_samples[i] = audio_samples[i] * 1;  // Giảm amplitude xuống 10%
+        for (int i = 0; i < samples_count; i++)
+        {
+          audio_samples[i] = audio_samples[i] * 1; // Tăng giảm hệ số
         }
 
         // Ghi dữ liệu ra I2S
         esp_err_t write_result = i2s_write(I2S_PORT, chunk->data, chunk->length, &bytes_written, pdMS_TO_TICKS(1000));
-        if (write_result != ESP_OK) {
+        if (write_result != ESP_OK)
+        {
           Serial.printf("Lỗi ghi I2S: %d (%s), độ dài chunk: %d\n",
                         write_result, esp_err_to_name(write_result), chunk->length);
-        } else if (bytes_written != chunk->length) {
+        }
+        else if (bytes_written != chunk->length)
+        {
           Serial.printf("Chỉ ghi được %d/%d bytes\n", bytes_written, chunk->length);
         }
 
@@ -544,21 +610,27 @@ void playbackTask(void* parameter) {
         free(chunk->data);
         free(chunk);
         chunk = NULL;
-      } else {
+      }
+      else
+      {
         Serial.println("Nhận được chunk không hợp lệ");
-        if (chunk) free(chunk);
+        if (chunk)
+          free(chunk);
         chunk = NULL;
       }
-    } else {
+    }
+    else
+    {
       // Không có dữ liệu nhận được trong 1 giây
-      // Nếu đang ở chế độ speaker và đã 3 giây không nhận được âm thanh mới,
+      // Nếu đang ở chế độ speaker và đã 1.5 giây không nhận được âm thanh mới,
       // thì chuyển về trạng thái ban đầu để sẵn sàng cho ghi âm tiếp
-      if (speaker_mode_active && (millis() - lastAudioTime > 1500)) {
+      if (speaker_mode_active && (millis() - lastAudioTime > 1500))
+      {
         Serial.println("Không có âm thanh mới trong 1.5 giây. Chuyển về chế độ ban đầu.");
         speaker_mode_active = false;
         // Tắt loa và về trạng thái NONE để sẵn sàng ghi âm tiếp
         switch_i2s_mode(I2S_MODE_NONE);
-        digitalWrite(SPEAKER_SD_PIN, LOW);  // Tắt loa
+        digitalWrite(SPEAKER_SD_PIN, LOW); // Tắt loa
         // Xóa queue để đảm bảo không còn dữ liệu cũ
         xQueueReset(playbackQueue);
       }
@@ -567,9 +639,10 @@ void playbackTask(void* parameter) {
 }
 
 // --- Setup ---
-void setup() {
+void setup()
+{
   Serial.begin(115200);
-  Serial.println("\n--- ESP32 Audio Record & Playback via WebSocket ---");
+  Serial.println("\n--- Client Real Time AI Voice Chat ---");
 
   pinMode(PIN_BUTTON, INPUT_PULLUP);
 
@@ -580,11 +653,12 @@ void setup() {
 
   // Thêm cấu hình cho chân Shutdown của loa
   pinMode(SPEAKER_SD_PIN, OUTPUT);
-  digitalWrite(SPEAKER_SD_PIN, LOW);  // Mặc định tắt loa khi khởi động
+  digitalWrite(SPEAKER_SD_PIN, LOW); // Mặc định tắt loa khi khởi động
 
   // Tạo mutex cho I2S
   i2s_mutex = xSemaphoreCreateMutex();
-  if (i2s_mutex == NULL) {
+  if (i2s_mutex == NULL)
+  {
     Serial.println("Failed to create I2S mutex. Halting.");
     while (1)
       ;
@@ -592,7 +666,8 @@ void setup() {
 
   Serial.printf("Connecting to WiFi: %s\n", ssid);
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED)
+  {
     delay(500);
     Serial.print(".");
   }
@@ -601,8 +676,9 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   // Tạo hàng đợi Playback chứa con trỏ tới AudioChunk*
-  playbackQueue = xQueueCreate(PLAYBACK_QUEUE_LENGTH, sizeof(AudioChunk*));
-  if (playbackQueue == NULL) {
+  playbackQueue = xQueueCreate(AUDIO_PLAYBACK_QUEUE_LENGTH, sizeof(AudioChunk *));
+  if (playbackQueue == NULL)
+  {
     Serial.println("Failed to create playback queue. Halting.");
     while (1)
       ;
@@ -612,12 +688,13 @@ void setup() {
   webSocket.begin(websockets_server_host, websockets_server_port, websockets_path);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
-  webSocket.enableHeartbeat(15000, 3000, 2);
+  webSocket.enableHeartbeat(5000, 2000, 3);
 
   Serial.println("Creating Playback Task...");
   xTaskCreatePinnedToCore(
-    playbackTask, "PlaybackTask", PLAYBACK_TASK_STACK_SIZE, NULL, 5, &playbackTaskHandle, 0);
-  if (playbackTaskHandle == NULL) {
+      playbackTask, "PlaybackTask", AUDIO_PLAYBACK_TASK_STACK_SIZE, NULL, 5, &playbackTaskHandle, 0);
+  if (playbackTaskHandle == NULL)
+  {
     Serial.println("Failed to create playback task. Halting.");
     while (1)
       ;
@@ -629,43 +706,52 @@ void setup() {
 }
 
 // --- Loop ---
-void loop() {
+void loop()
+{
   webSocket.loop();
 
   // Kiểm tra trạng thái nút nhấn với chống dội
-  bool currentButtonState = digitalRead(PIN_BUTTON) == LOW;  // LOW khi nhấn (pull-up)
+  bool currentButtonState = digitalRead(PIN_BUTTON) == LOW; // LOW khi nhấn (pull-up)
   unsigned long currentTime = millis();
 
   // Xử lý thay đổi trạng thái nút nhấn với chống dội
-  if (currentTime - lastButtonChangeTime > DEBOUNCE_TIME) {
+  if (currentTime - lastButtonChangeTime > DEBOUNCE_TIME)
+  {
     // Phát hiện nhấn nút - bắt đầu ghi âm 5 giây
-    if (currentButtonState && !buttonPressed && !isRecording && webSocket.isConnected()) {
+    if (currentButtonState && !buttonPressed && !isRecording && webSocket.isConnected())
+    {
       buttonPressed = true;
       lastButtonChangeTime = currentTime;
 
       // Đảm bảo không có chế độ I2S nào đang hoạt động trước khi bắt đầu ghi âm
-      if (current_i2s_mode != I2S_MODE_NONE) {
+      if (current_i2s_mode != I2S_MODE_NONE)
+      {
         switch_i2s_mode(I2S_MODE_NONE);
-        delay(100);  // Cho phép hệ thống ổn định
+        delay(100); // Cho phép hệ thống ổn định
       }
 
       Serial.println("Button pressed. Starting recording for 5 seconds...");
       isRecording = true;
 
-      if (recordTaskHandle == NULL) {
+      if (recordTaskHandle == NULL)
+      {
         xTaskCreatePinnedToCore(
-          recordAndSendTask, "RecordSendTask", 8192, NULL, 10, &recordTaskHandle, 1);
-        if (recordTaskHandle == NULL) {
+            recordAndSendTask, "RecordSendTask", 8192, NULL, 10, &recordTaskHandle, 1);
+        if (recordTaskHandle == NULL)
+        {
           Serial.println("Failed to create recording task!");
           isRecording = false;
-        } else {
+        }
+        else
+        {
           Serial.println("Recording Task Created on Core 1.");
         }
       }
     }
 
     // Đặt lại trạng thái nút khi thả (chỉ để chống dội)
-    if (!currentButtonState && buttonPressed) {
+    if (!currentButtonState && buttonPressed)
+    {
       buttonPressed = false;
       lastButtonChangeTime = currentTime;
     }
