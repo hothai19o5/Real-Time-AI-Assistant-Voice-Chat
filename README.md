@@ -1,10 +1,11 @@
 # 🤖 Real-Time AI Voice Chat using ESP32 & WebSocket
 
-![ESP32](https://img.shields.io/badge/ESP32-RealTime-blue)
+![ESP32](https://img.shields.io/badge/ESP32-RealTime-lightblue)
 ![Node.js](https://img.shields.io/badge/Node.js-Server-yellowgreen)
-![Python](https://img.shields.io/badge/Python-Server-gray)
+![Python](https://img.shields.io/badge/Python-Server-blue)
+![Cpp](https://img.shields.io/badge/Cpp-Hardware-violet)
 ![PhoWhisper](https://img.shields.io/badge/PhoWhisper-STT-red)
-![Gemini](https://img.shields.io/badge/Gemini-AI-lightgrey)
+![Gemini](https://img.shields.io/badge/Gemini-AI-green)
 ![FPT](https://img.shields.io/badge/FPT-TTS-blueviolet)
 
 ## 🧠 Mô tả dự án
@@ -30,11 +31,11 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 
 ### 🖥️ Server (Node.js)
 - Nhận dữ liệu âm thanh từ ESP32 qua WebSocket
-- Chuyển giọng nói thành văn bản bằng PhoWhisper STT
+- Chuyển giọng nói thành văn bản bằng PhoWhisper STT chạy local
 - Nhận dạng đó là lệnh hay là câu hỏi
-- Nếu là các lệnh Hỏi giờ, Xem thời tiết, Phát nhạc thì Server sẽ xử lý
-- Gửi câu hỏi text tới Gemini (Google AI) để nhận phản hồi
-- Chuyển phản hồi thành giọng nói với FPT API
+- Nếu là các lệnh Hỏi giờ, Xem thời tiết, Phát nhạc thì Server sẽ xử lý tương ứng
+- Gửi câu hỏi text tới Gemini (Google AI) để nhận phản hồi text
+- Chuyển phản hồi text thành giọng nói với FPT API
 - Gửi lại âm thanh về ESP32 để phát ra loa
 
 ---
@@ -80,7 +81,7 @@ WEATHER_API_KEY=your_weather_api_key
 Chạy server:
 ```bash
 node .\server.js
-python app.py
+python .\app.py
 ```
 ### 📲 ESP32
 Cài đặt các thư viện cần thiết
@@ -95,5 +96,8 @@ Sử dụng Arduino IDE
 
 Kết nối phần cứng:
 
-    Continue Updating
-...
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/922f9d24-55e0-47dd-a36e-287696f1e439" alt="" width="60%">
+</p>
+
+**Đang cập nhật...**
