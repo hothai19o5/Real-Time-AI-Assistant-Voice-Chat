@@ -22,6 +22,17 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 
 ---
 
+## 🚀 Tính năng
+- Hỏi Gemini
+- Wake word (sẽ cập nhật)
+- Xem thời gian hiện tại
+- Xem thời tiết hiện tại
+- Xem dự báo thời tiết (sẽ cập nhật)
+- Phát nhạc ngẫu nhiên trong thư mục music
+- Phát bài nhạc cụ thể
+
+---
+
 ## 🏗️ Kiến trúc hệ thống
 
 ### 📡 ESP32
@@ -43,22 +54,24 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 ## 📁 Cấu trúc thư mục
     real-time-voice-chat
     ├── serverNodeJsAi/
-    │   ├── node_modules
+    │   ├── node_modules/
     │   ├── .env
     │   ├── package-lock.json
     │   ├── package.json
+    │   ├── music/                      # Music files
+    │   ├── sound/                      # Notification sound
     │   └── server.js                   # WebSocket server
     ├── phowhisper_service/
     │   ├── models/                     # Speech-to-Text model
     │   ├── app.py                      # Speech-to-Text
     │   └── requirements.txt                   
     ├── aiAssistantVoice/
-    │   └── aiAssistantVoice.ino        # Esp32 C++
+    │   └── aiAssistantVoice.cpp        # Esp32 C++
     ├── .gitignore
     └── README.md
 ---
 
-## 🚀 Hướng dẫn cài đặt
+## ⚙️ Hướng dẫn cài đặt
 
 ### 🔧 Server (Node.js)
 
@@ -80,7 +93,12 @@ WEATHER_API_KEY=your_weather_api_key
 ```
 Chạy server:
 ```bash
+cd .\serverNodeJsAi\
 node .\server.js
+```
+
+```bash
+cd .\phowhisper_service\
 python .\app.py
 ```
 ### 📲 ESP32
