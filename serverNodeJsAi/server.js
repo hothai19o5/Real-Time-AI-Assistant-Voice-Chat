@@ -37,15 +37,36 @@ const locationMap = {
     "Hà Nội": "Hanoi", "Hồ Chí Minh": "Ho Chi Minh City", "Đà Nẵng": "Da Nang", "Cần Thơ": "Can Tho", "Hải Phòng": "Hai Phong", "Huế": "Hue", "Biên Hòa": "Bien Hoa", "Nha Trang": "Nha Trang", "Vũng Tàu": "Vung Tau", "Quảng Ninh": "Quang Ninh", "Thanh Hóa": "Thanh Hoa", "Nghệ An": "Nghe An", "Hà Tĩnh": "Ha Tinh", "Thái Nguyên": "Thai Nguyen", "Cà Mau": "Ca Mau", "Bắc Ninh": "Bac Ninh", "Nam Định": "Nam Dinh", "Bến Tre": "Ben Tre", "Long An": "Long An", "Kiên Giang": "Kien Giang", "Đồng Nai": "Dong Nai", "Hưng Yên": "Hung Yen", "Thái Bình": "Thai Binh", "Lạng Sơn": "Lang Son", "Lào Cai": "Lao Cai", "Hà Giang": "Ha Giang", "Điện Biên": "Dien Bien", "Kon Tum": "Kon Tum", "Gia Lai": "Gia Lai", "Đắk Lắk": "Dak Lak", "Đắk Nông": "Dak Nong", "Ninh Thuận": "Ninh Thuan", "Bình Thuận": "Binh Thuan", "Bắc Giang": "Bac Giang", "Hà Nam": "Ha Nam", "Quảng Bình": "Quang Binh", "Quảng Trị": "Quang Tri", "Thừa Thiên Huế": "Thua Thien Hue", "Sóc Trăng": "Soc Trang", "Trà Vinh": "Tra Vinh", "Hậu Giang": "Hau Giang", "Bạc Liêu": "Bac Lieu", "Đồng Tháp": "Dong Thap", "An Giang": "An Giang", "Tiền Giang": "Tien Giang", "Vĩnh Long": "Vinh Long", "Cao Bằng": "Cao Bang", "Tuyên Quang": "Tuyen Quang", "Yên Bái": "Yen Bai", "Phú Thọ": "Phu Tho", "Lai Châu": "Lai Chau", "Sơn La": "Son La", "Hòa Bình": "Hoa Binh", "Ninh Bình": "Ninh Binh",
 };
 
-const __dirname = path.dirname(new URL(import.meta.url).pathname); // Khởi tạo __dirname
 // Khởi tạo Gemini
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+// Khởi tạo lịch sử trợ lý với một số câu hỏi mẫu
+const initialAssistantHistory = [
+    {
+      role: "user",
+      parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời trong vòng tối đa khoảng 100-150 chữ. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt." }],
+    },
+    {
+      role: "model",
+      parts: [{ text: "Chào bạn! Tôi là một mô hình ngôn ngữ lớn, được đào tạo bởi Google. Tôi ở đây để giúp bạn với thông tin và các tác vụ dựa trên văn bản. Bạn có thể coi tôi là trợ lý AI ảo của bạn." }],
+    },
+    // {
+    //   role: "user",
+    //   parts: [{ text: "Nếu bạn thấy câu hỏi của tôi có ý nghĩa như `bật bài hát + tên_bài_hát` thì hãy đưa ra câu trả lời là `COMMAND bật bài hát tên_bài_hát` " }],
+    // },
+    // {
+    //   role: "model",
+    //   parts: [{ text: "Được thôi, ví dụ nếu câu hỏi của bạn là `bật anh là ai` thì tôi sẽ trả lời `COMMAND bật bài hát anh là ai`" }],
+    // },
+  ];
 
 // --- Tạo WebSocket Server ---
 const wss = new WebSocketServer({
     port: PORT,
-    perMessageDeflate: false // Tắt nén dữ liệu, giảm độ trễ, giảm tải CPU 
+    perMessageDeflate: false, // Tắt nén dữ liệu, giảm độ trễ, giảm tải CPU 
+    keepalive: true, // Bật tính năng giữ kết nối sống
+    clientTracking: true, // Theo dõi trạng thái kết nối của client
+    keepaliveInterval: 30000 // Thời gian giữ kết nối sống (30 giây)
 });
 console.log(`WebSocket server started on port ${PORT}`);
 
@@ -148,6 +169,15 @@ function detectCommand(text) {
         };
     }
 
+    // Lọc lệnh giới thiệu bản thân
+    if (normalizedText.includes('giới thiệu bản thân') || normalizedText.includes('bạn là ai') ||
+        normalizedText.includes('bạn tên gì') || normalizedText.includes('tên bạn là gì')
+        || normalizedText.includes('tên mày là gì') || normalizedText.includes('mày là ai') || normalizedText.includes('mày tên gì')) {
+        return {
+            type: 'INTRODUCE'
+        };
+    }
+
     // Không phát hiện ra lệnh thì là 1 câu hỏi bình thường, gửi cho Gemini xử lý
     return { type: 'NORMAL' };
 }
@@ -245,7 +275,7 @@ function normalizeFileName(songName) {
 async function handleMusicCommand(songName, ws) {
     try {
         // Đường dẫn đến thư mục music
-        const musicDir = path.join(__dirname, '../music');
+        const musicDir = './music';
 
         // Lọc tất cả file .wav trong thư mục nhạc
         const files = fs.readdirSync(musicDir).filter(file =>
@@ -253,7 +283,7 @@ async function handleMusicCommand(songName, ws) {
         );
 
         if (files.length === 0) {   // Nếu không có file nhạc nào trong thư mục music
-            playSoundFile(path.join(__dirname, '../sound/khong_tim_thay_file_nhac.wav'), ws); // Phát âm thanh thông báo không có nhạc
+            playSoundFile('./sound/khong_tim_thay_file_nhac.wav', ws); // Phát âm thanh thông báo không có nhạc
             return;
         }
 
@@ -266,7 +296,7 @@ async function handleMusicCommand(songName, ws) {
                 return;
             } else {
                 console.log(`Song not found: ${fileName}`);
-                playSoundFile(path.join(__dirname, '../sound/khong_tim_thay_file_nhac.wav'), ws); // Phát âm thanh thông báo không tìm thấy bài hát
+                playSoundFile('./sound/khong_tim_thay_file_nhac.wav', ws); // Phát âm thanh thông báo không tìm thấy bài hát
                 return;
             }
         }
@@ -280,7 +310,7 @@ async function handleMusicCommand(songName, ws) {
 
     } catch (error) {
         console.error("Error handling music command:", error);
-        playSoundFile(path.join(__dirname, '../sound/loi_phat_nhac.wav'), ws); // Phát âm thanh lỗi
+        playSoundFile('./sound/loi_phat_nhac.wav', ws); // Phát âm thanh lỗi
     }
 }
 
@@ -294,7 +324,7 @@ async function handleWeatherCommand(location, ws) {
 
     } catch (error) {
         console.error("Error handling weather command:", error);
-        playSoundFile(path.join(__dirname, '../sound/khong_lay_duoc_thoi_tiet.wav'), ws); // Phát âm thanh lỗi
+        playSoundFile('./sound/khong_lay_duoc_thoi_tiet.wav', ws); // Phát âm thanh lỗi
     }
 }
 
@@ -315,7 +345,7 @@ async function handleTimeCommand(ws) {
 
     } catch (error) {
         console.error("Error handling time command:", error);
-        playSoundFile(path.join(__dirname, '../sound/khong_xem_duoc_thoi_gian.wav'), ws); // Phát âm thanh lỗi
+        playSoundFile('./sound/khong_xem_duoc_thoi_gian.wav', ws); // Phát âm thanh lỗi
     }
 }
 
@@ -479,10 +509,22 @@ async function transcribeAudio(audioBuffer) {
 
 // --- Xử lý kết nối Client ---
 wss.on('connection', (ws) => {
+    ws.isAlive = true; // Đánh dấu kết nối là sống
+
+    // Xử lý ping/pong
+    ws.on('pong', () => { ws.isAlive = true; });
+
     console.log('Client connected');
-    playSoundFile(path.join(__dirname, '../sound/ket_noi_thanh_cong.wav'), ws); // Phát âm thanh chào mừng khi kết nối thành công
+    playSoundFile("./sound/ket_noi_thanh_cong.wav", ws); // Phát âm thanh chào mừng khi kết nối thành công
 
     let audioChunks = []; // Mảng lưu các chunk âm thanh nhận từ ESP32
+
+    // Bắt đầu phiên chat với lịch sử mẫu
+    // Gọi từ ngoài để không phải khởi tạo liên tục
+    const chat = geminiModel.startChat({
+        history: initialAssistantHistory, // Truyền mảng lịch sử mẫu vào đây
+    });
+    
 
     ws.on('message', async (message) => {
         // Kiểm tra xem message là binary (âm thanh) hay text (điều khiển)
@@ -521,11 +563,18 @@ wss.on('connection', (ws) => {
                             console.log(`Time command detected`);
                             await handleTimeCommand(ws);
                         }
+                        else if (commandResult.type === 'INTRODUCE') {
+                            console.log(`Introduce command detected`);
+                            playSoundFile('./sound/gioi_thieu_ban_than_' + Math.floor(Math.random() * 4 + 1) + '.wav', ws); // Phát âm thanh giới thiệu bản thân
+                        }
                         else {
                             // No specific command detected, process with Gemini as before
                             try {
                                 console.log("Sending text to Gemini...");
-                                const result = await geminiModel.generateContent(recognizedText);
+                                // Đã khởi tạo chat với lịch sử mẫu ở trên
+                                // Sau đó, khi muốn gửi câu hỏi thực tế từ người dùng (recognizedText), sẽ dùng chat.sendMessage()
+                                // Điều này sẽ tự động bao gồm lịch sử mẫu và các lượt sau đó làm ngữ cảnh
+                                const result = await chat.sendMessage(recognizedText);
                                 const response = result.response;
                                 let geminiText = response.text();
                                 console.log(`Raw Gemini Response: "${geminiText}"`);
@@ -551,7 +600,7 @@ wss.on('connection', (ws) => {
                     } else {
                         console.log("Empty transcription or error from PhoWhisper service");
                         if (ws.readyState === WebSocket.OPEN) {
-                            playSoundFile(path.join(__dirname, '../sound/xin_loi_toi_khong_nghe_ro_vui_long_thu_lai.wav'), ws);
+                            playSoundFile('./sound/xin_loi_toi_khong_nghe_ro_vui_long_thu_lai.wav', ws);
                         }
                     }
                 } catch (error) {
