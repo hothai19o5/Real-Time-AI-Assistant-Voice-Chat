@@ -79,6 +79,9 @@ Cài các dependency:
 ```bash
 cd .\serverNodeJsAi\
 npm install
+```
+
+```bash
 cd .\phowhisper_service\
 pip install -r requirements.txt
 ```
@@ -113,6 +116,23 @@ Sử dụng Arduino IDE
     driver/i2s.h
 
 Kết nối phần cứng:
+- INMP441
+  SD - D32
+  VDD - 3.3V
+  GND - GND
+  L/R - GND
+  WS - D15
+  SCK - D27
+- MAX98357A
+  Vin - 3.3V
+  GND - GND
+  SD - D26
+  GAIN - GND
+  DIN - D25
+  BCLK - D27
+  LRC - D15
+- Button
+  D4
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/922f9d24-55e0-47dd-a36e-287696f1e439" alt="" width="60%">
