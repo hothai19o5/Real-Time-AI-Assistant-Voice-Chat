@@ -3,7 +3,7 @@ dotenv.config();        // Load biến môi trường từ file .env
 import { WebSocket, WebSocketServer } from 'ws';    // Import WebSocket từ thư viện ws
 import fs from 'fs';            // Import fs để làm việc với file hệ thống
 import path from 'path';        // Import path để xử lý đường dẫn file
-import { GoogleGenerativeAI } from "@google/generative-ai";         // Import Google Generative AI SDK
+import { GoogleGenerativeAI } from '@google/generative-ai';         // Import Google Generative AI SDK
 import axios from 'axios';      // Import axios để thực hiện các yêu cầu HTTP
 import FormData from 'form-data';       // Import FormData để gửi dữ liệu dạng form
 
@@ -14,6 +14,7 @@ const PHOWHISPER_SERVICE_URL = 'http://localhost:5000/transcribe'; // Định ng
 // Cấu hình FPT TTS API
 const FPT_TTS_API_KEY = process.env.FPT_TTS_API_KEY;            // Khóa API TTS từ biến môi trường
 const FPT_TTS_VOICE = process.env.FPT_TTS_VOICE;
+const FPT_STT_API_KEY = process.env.FPT_STT_API_KEY;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;            // Khóa API thời tiết từ biến môi trường
 
 // Kiểm tra API Key
@@ -43,12 +44,12 @@ const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 // Khởi tạo lịch sử trợ lý với một số câu hỏi mẫu
 const initialAssistantHistory = [
     {
-      role: "user",
-      parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời trong vòng tối đa khoảng 100-150 chữ. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt." }],
+        role: "user",
+        parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời trong vòng tối đa khoảng 150-200 chữ. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt." }],
     },
     {
-      role: "model",
-      parts: [{ text: "Chào bạn! Tôi là một mô hình ngôn ngữ lớn, được đào tạo bởi Google. Tôi ở đây để giúp bạn với thông tin và các tác vụ dựa trên văn bản. Bạn có thể coi tôi là trợ lý AI ảo của bạn." }],
+        role: "model",
+        parts: [{ text: "Chào bạn! Tôi là một mô hình ngôn ngữ lớn, được đào tạo bởi Google. Tôi ở đây để giúp bạn với thông tin và các tác vụ dựa trên văn bản. Bạn có thể coi tôi là trợ lý AI ảo của bạn." }],
     },
     // {
     //   role: "user",
@@ -58,7 +59,7 @@ const initialAssistantHistory = [
     //   role: "model",
     //   parts: [{ text: "Được thôi, ví dụ nếu câu hỏi của bạn là `bật anh là ai` thì tôi sẽ trả lời `COMMAND bật bài hát anh là ai`" }],
     // },
-  ];
+];
 
 // --- Tạo WebSocket Server ---
 const wss = new WebSocketServer({
@@ -351,7 +352,8 @@ async function handleTimeCommand(ws) {
 
 // Hàm lấy thông tin thời tiết từ WeatherAPI.com
 async function fetchWeatherData(location, apiKey) {
-    const queryLocation = locationMap[location];
+    // Lấy địa điểm từ trong map, nếu không tìm thấy thì auto trả về Hà Nội
+    const queryLocation = locationMap[location] || 'Hanoi';
     try {
         // Using WeatherAPI.com instead of OpenWeatherMap
         const response = await axios.get(`https://api.weatherapi.com/v1/current.json`, {
@@ -371,7 +373,7 @@ async function fetchWeatherData(location, apiKey) {
                         "Nguy hiểm cực độ, Tránh tiếp xúc trực tiếp với ánh nắng";
 
 
-        return `Thời tiết hiện tại ở ${location} là ${data.current.condition.text}. 
+        return `Thời tiết hiện tại ở ${queryLocation} là ${data.current.condition.text}. 
                 Nhiệt độ ${Math.round(data.current.temp_c)} độ xê,
                 Cảm giác như ${Math.round(data.current.feelslike_c)} độ xê, 
                 Chỉ số u vê ${dataUV},
@@ -385,26 +387,24 @@ async function fetchWeatherData(location, apiKey) {
     }
 }
 
-// Hàm gửi phản hồi TTS tới ESP32 sử dụng FPT TTS API
+/**
+ * Gửi phản hồi TTS tới ESP32 sử dụng FPT TTS API với xử lý song song
+ * @param {string} text - Văn bản cần chuyển thành giọng nói
+ * @param {WebSocket} ws - WebSocket connection
+ */
 async function sendTTSResponse(text, ws) {
     if (ws.readyState !== WebSocket.OPEN) return;   // Kiểm tra trạng thái kết nối WebSocket
 
     try {
         ws.send("AUDIO_STREAM_START");
 
-        // Lấy API key và voice từ biến môi trường
-        const apiKey = FPT_TTS_API_KEY;
-        const voice = FPT_TTS_VOICE;
-
         // Chuẩn bị header với format=wav để nhận WAV thay vì MP3
         const headers = {
-            'api_key': apiKey,
-            'voice': voice,
+            'api_key': FPT_TTS_API_KEY,
+            'voice': FPT_TTS_VOICE,
             'format': 'wav',
             'Cache-Control': 'no-cache'
         };
-
-        console.log("Calling FPT TTS API...");
 
         // Gọi API FPT để chuyển text thành speech
         const response = await axios.post(
@@ -413,8 +413,6 @@ async function sendTTSResponse(text, ws) {
             { headers }
         );
 
-        console.log("FPT TTS API Response:", response.data);
-
         if (response.data.error === 0) {    // Nếu không có lỗi từ API
             const audioUrl = response.data.async;   // Lấy URL của file âm thanh đã tạo
 
@@ -422,10 +420,8 @@ async function sendTTSResponse(text, ws) {
             await new Promise(resolve => setTimeout(resolve, 10000));
 
             // Tải file WAV từ URL
-            console.log("Downloading WAV audio from:", audioUrl);
             const audioResponse = await axios.get(audioUrl, { responseType: 'arraybuffer' });
             const audioBuffer = Buffer.from(audioResponse.data);
-            console.log(`Received audio data: ${audioBuffer.length} bytes`);
 
             // Chia thành các chunk và gửi qua WebSocket
             const audioChunks = chunkAudioData(audioBuffer, 2048);
@@ -455,6 +451,131 @@ async function sendTTSResponse(text, ws) {
             ws.send("AUDIO_STREAM_END");
             ws.send(`Error generating speech: ${error.message}`);
         }
+    }
+}
+
+/**
+ * Hàm gọi API Speech-to-Text của FPT AI sử dụng axios
+ * @param {Buffer} audioBuffer - Buffer chứa dữ liệu âm thanh PCM
+ * @param {string} apiKey - API key của FPT AI
+ * @param {WebSocket} ws - WebSocket để phát âm thanh lỗi (optional)
+ * @returns {Promise<Object>} Kết quả nhận dạng
+ */
+async function callApiSpeechToText(audioBuffer, apiKey, ws = null, timeoutMs = 30000) {
+
+    // Kiểm tra đầu vào
+    if (!audioBuffer || audioBuffer.length === 0) {
+        const error = new Error('Không có dữ liệu âm thanh');
+        console.error(error.message);
+        return { success: false, error: error.message };
+    }
+
+    if (!apiKey) {
+        const error = new Error('Thiếu API key');
+        console.error(error.message);
+        return { success: false, error: error.message };
+    }
+
+    try {
+        // Tạo WAV header
+        const wavHeaderBuffer = createWavHeader(audioBuffer.length, {
+            numChannels: 1,
+            sampleRate: 16000,
+            bitsPerSample: 16
+        });
+
+        // Tạo file WAV đầy đủ
+        const wavData = Buffer.concat([wavHeaderBuffer, audioBuffer]);
+
+        console.log(`Đang gửi âm thanh đến FPT STT API: ${wavData.length} bytes`);
+
+        const response = await axios.post(
+            'https://api.fpt.ai/hmi/asr/general',
+            wavData,
+            {
+                headers: {
+                    'api_key': apiKey
+                }
+            }
+        );
+
+        // Xử lý các trạng thái khác nhau
+        switch (response.data.status) {
+            case 0: // Thành công
+                console.log(`STT thành công: "${response.data.hypotheses[0].utterance}"`);
+                return {
+                    success: true,
+                    text: response.data.hypotheses[0].utterance,
+                    id: response.data.id,
+                    status: response.data.status
+                };
+
+            case 1: // Không có giọng nói
+                console.log('STT: Không phát hiện giọng nói');
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    playSoundFile('./sound/khong_nghe_thay_giong_noi.wav', ws);
+                }
+                return {
+                    success: false,
+                    error: 'Không phát hiện giọng nói',
+                    id: response.data.id,
+                    status: response.data.status
+                };
+
+            case 2: // Đã hủy
+                console.log('STT: Yêu cầu bị hủy');
+                return {
+                    success: false,
+                    error: 'Yêu cầu bị hủy',
+                    id: response.data.id,
+                    status: response.data.status
+                };
+
+            case 9: // Hệ thống bận
+                console.log('STT: Hệ thống bận');
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    playSoundFile('./sound/he_thong_dang_ban.wav', ws);
+                }
+                return {
+                    success: false,
+                    error: response.data.message || 'Hệ thống đang bận',
+                    id: response.data.id,
+                    status: response.data.status
+                };
+
+            default:
+                console.log(`STT: Lỗi không xác định (status: ${response.data.status})`);
+                return {
+                    success: false,
+                    error: 'Lỗi không xác định',
+                    id: response.data.id,
+                    status: response.data.status
+                };
+        }
+    } catch (error) {
+        // Xử lý lỗi từ axios
+        console.error('Lỗi khi gọi API Speech-to-Text:', error);
+
+        // Phát âm thanh lỗi nếu có WebSocket
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            playSoundFile('./sound/stt_timeout.wav', ws);
+        }
+
+        // Kiểm tra lỗi timeout
+        if (error.code === 'ECONNABORTED') {
+            return {
+                success: false,
+                error: `Timeout (${timeoutMs / 1000}s)`,
+                timedOut: true
+            };
+        }
+
+        // Trả về thông tin lỗi chi tiết
+        return {
+            success: false,
+            error: error.message || 'Lỗi không xác định',
+            status: error.response?.status
+        };
     }
 }
 
@@ -502,6 +623,7 @@ async function transcribeAudio(audioBuffer) {
             throw axiosError;
         }
     } catch (error) {
+        playSoundFile('./sound/pho_whisper_timeout.wav', ws); // Phát âm thanh lỗi
         console.error("Error calling PhoWhisper service:", error.message);
         throw error;
     }
@@ -524,7 +646,7 @@ wss.on('connection', (ws) => {
     const chat = geminiModel.startChat({
         history: initialAssistantHistory, // Truyền mảng lịch sử mẫu vào đây
     });
-    
+
 
     ws.on('message', async (message) => {
         // Kiểm tra xem message là binary (âm thanh) hay text (điều khiển)
@@ -541,9 +663,13 @@ wss.on('connection', (ws) => {
 
                 try {
                     // Gọi PhoWhisper service để chuyển đổi âm thanh thành văn bản
-                    console.log("Calling PhoWhisper service...");
-                    const transcriptionResult = await transcribeAudio(fullAudioBuffer);
-                    console.log("PhoWhisper Result:", transcriptionResult);
+                    // console.log("Calling PhoWhisper service...");
+                    // const transcriptionResult = await transcribeAudio(fullAudioBuffer);
+                    // console.log("PhoWhisper Result:", transcriptionResult);
+
+                    // Gọi FPT Speech-to-Text API để chuyển đổi âm thanh thành văn bản
+                    console.log("Calling FPT Speech-to-Text API...");
+                    const transcriptionResult = await callApiSpeechToText(fullAudioBuffer, FPT_STT_API_KEY, ws, 30000);
 
                     if (transcriptionResult.success && transcriptionResult.text) {
                         const recognizedText = transcriptionResult.text;
