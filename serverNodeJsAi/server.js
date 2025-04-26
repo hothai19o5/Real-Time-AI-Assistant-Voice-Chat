@@ -239,11 +239,7 @@ async function playSoundFile(filePath, ws) {
                 console.log(`Playback progress: ${progress}% (${i}/${totalChunks} chunks)`);
             }
 
-            if (i % 50 === 0) { // Nếu đã gửi 50 chunk thì tạm dừng lâu hơn một chút
-                await new Promise(resolve => setTimeout(resolve, 100));
-            } else {
-                await new Promise(resolve => setTimeout(resolve, 30));
-            }
+            await new Promise(resolve => setTimeout(resolve, 50));  // Tăng thời gian chờ giữa mỗi chunk để esp32 xử lý kịp
         }
 
         if (ws.readyState === WebSocket.OPEN) {
@@ -469,7 +465,7 @@ async function sendTTSResponse(text, ws) {
             text: text,
             voice: 'vi-VN-HoaiMyNeural',
             rate: "+0%",
-            volume: "-50%"
+            volume: "+0%"
         }, {
             responseType: 'arraybuffer',
             timeout: 30000 // 30 giây timeout
@@ -493,7 +489,7 @@ async function sendTTSResponse(text, ws) {
             ws.send(audioChunks[i]);
 
             // Đợi một chút giữa các chunk để tránh buffer overflow
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
 
         // Kết thúc stream
@@ -555,7 +551,7 @@ async function sendTTSResponse(text, ws) {
 //                         return;
 //                     }
 //                     ws.send(chunk);
-//                     await new Promise(resolve => setTimeout(resolve, 30));
+//                     await new Promise(resolve => setTimeout(resolve, 50));
 //                 }
 
 //                 // Thêm pause nhỏ giữa các đoạn
