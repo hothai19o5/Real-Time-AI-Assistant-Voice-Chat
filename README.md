@@ -12,11 +12,11 @@
 
 **Real-Time AI Voice Chat** là một hệ thống giao tiếp hai chiều bằng giọng nói giữa con người và trí tuệ nhân tạo. Dự án sử dụng:
 
-- ESP32 (thu & phát âm thanh)
-- WebSocket (giao tiếp thời gian thực)
-- PhoWhisper (speech-to-text)
-- Gemini (AI chatbot)
-- FPT API (text-to-speech)
+- **ESP32** (thu & phát âm thanh)
+- **WebSocket** (giao tiếp thời gian thực)
+- **PhoWhisper** (speech-to-text) || **FPT** API (speech to text)
+- **Gemini** (AI chatbot)
+- **Edge TTS**
 
 Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 
@@ -41,13 +41,14 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 - Gửi và nhận dữ liệu âm thanh qua **WebSocket**
 
 ### 🖥️ Server (Node.js)
-- Nhận dữ liệu âm thanh từ ESP32 qua WebSocket
-- Chuyển giọng nói thành văn bản bằng PhoWhisper STT chạy local
+- Nhận dữ liệu âm thanh từ **ESP32** qua WebSocket
+- Chuyển giọng nói thành văn bản bằng **PhoWhisper** STT chạy local, yêu cầu máy mạnh.
+- Chuyển giọng nói thành văn bản bằng **FPT** API STT, bản dùng thử 240 lượt/năm, **đang tìm cách thay thế**.
 - Nhận dạng đó là lệnh hay là câu hỏi
 - Nếu là các lệnh Hỏi giờ, Xem thời tiết, Phát nhạc thì Server sẽ xử lý tương ứng
-- Gửi câu hỏi text tới Gemini (Google AI) để nhận phản hồi text
-- Chuyển phản hồi text thành giọng nói với FPT API
-- Gửi lại âm thanh về ESP32 để phát ra loa
+- Gửi câu hỏi text tới **Gemini** (Google AI) để nhận phản hồi text
+- Chuyển phản hồi text thành giọng nói với **Edge TTS**
+- Gửi lại âm thanh về **ESP32** để phát ra loa
 
 ---
 
@@ -60,6 +61,7 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
     │   ├── package.json
     │   ├── music/                      # Music files
     │   ├── sound/                      # Notification sound
+    │   ├── edge_tts_server.py          # Sever python handler Edge TTS
     │   └── server.js                   # WebSocket server
     ├── phowhisper_service/
     │   ├── models/                     # Speech-to-Text model
@@ -86,7 +88,7 @@ cd .\phowhisper_service\
 pip install -r requirements.txt
 ```
 
-Thiết lập API key cho Gemini, FPT TTS và Weather
+Thiết lập API key cho **Gemini**, **FPT STT** và **Weather**
 
 Tạo file .env:
 ```ini
@@ -98,6 +100,7 @@ Chạy server:
 ```bash
 cd .\serverNodeJsAi\
 node .\server.js
+python .\edge_tts_server.py
 ```
 
 ```bash
@@ -107,7 +110,7 @@ python .\app.py
 ### 📲 ESP32
 Cài đặt các thư viện cần thiết
 
-Sử dụng Arduino IDE
+Sử dụng **Arduino IDE**
 
     Wifi.h
     WebSocketsClient.h
