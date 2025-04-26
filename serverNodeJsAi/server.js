@@ -387,72 +387,341 @@ async function fetchWeatherData(location, apiKey) {
     }
 }
 
+// /**
+//  * Gửi phản hồi TTS tới ESP32 sử dụng FPT TTS API với xử lý song song
+//  * @param {string} text - Văn bản cần chuyển thành giọng nói
+//  * @param {WebSocket} ws - WebSocket connection
+//  */
+// async function sendTTSResponse(text, ws) {
+//     if (ws.readyState !== WebSocket.OPEN) return;   // Kiểm tra trạng thái kết nối WebSocket
+
+//     try {
+//         ws.send("AUDIO_STREAM_START");
+
+//         // Chuẩn bị header với format=wav để nhận WAV thay vì MP3
+//         const headers = {
+//             'api_key': FPT_TTS_API_KEY,
+//             'voice': FPT_TTS_VOICE,
+//             'format': 'wav',
+//             'Cache-Control': 'no-cache'
+//         };
+
+//         // Gọi API FPT để chuyển text thành speech
+//         const response = await axios.post(
+//             'https://api.fpt.ai/hmi/tts/v5',
+//             text,
+//             { headers }
+//         );
+
+//         if (response.data.error === 0) {    // Nếu không có lỗi từ API
+//             const audioUrl = response.data.async;   // Lấy URL của file âm thanh đã tạo
+
+//             // Chờ một chút để đảm bảo file đã được tạo xong
+//             await new Promise(resolve => setTimeout(resolve, 10000));
+
+//             // Tải file WAV từ URL
+//             const audioResponse = await axios.get(audioUrl, { responseType: 'arraybuffer' });
+//             const audioBuffer = Buffer.from(audioResponse.data);
+
+//             // Chia thành các chunk và gửi qua WebSocket
+//             const audioChunks = chunkAudioData(audioBuffer, 2048);
+
+//             for (let i = 0; i < audioChunks.length; i++) {
+//                 if (ws.readyState !== WebSocket.OPEN) break;
+//                 ws.send(audioChunks[i]);
+//                 await new Promise(resolve => setTimeout(resolve, 50));
+//             }
+
+//             // Kết thúc stream
+//             if (ws.readyState === WebSocket.OPEN) {
+//                 const silenceBuffer = Buffer.alloc(1600, 0); // 50ms of silence
+//                 ws.send(silenceBuffer);
+//                 await new Promise(resolve => setTimeout(resolve, 100));
+//                 ws.send("AUDIO_STREAM_END");
+//             }
+//         } else {
+//             console.error("FPT TTS API Error:", response.data);
+//             throw new Error(`FPT API error: ${response.data.message || 'Unknown error'}`);
+//         }
+//     } catch (error) {
+//         console.error("Error sending TTS response:", error);
+
+//         // Gửi thông báo lỗi nếu ws vẫn mở
+//         if (ws.readyState === WebSocket.OPEN) {
+//             ws.send("AUDIO_STREAM_END");
+//             ws.send(`Error generating speech: ${error.message}`);
+//         }
+//     }
+// }
+
 /**
- * Gửi phản hồi TTS tới ESP32 sử dụng FPT TTS API với xử lý song song
+ * Gửi phản hồi TTS tới ESP32 sử dụng Edge TTS thông qua service Python
  * @param {string} text - Văn bản cần chuyển thành giọng nói
  * @param {WebSocket} ws - WebSocket connection
  */
 async function sendTTSResponse(text, ws) {
-    if (ws.readyState !== WebSocket.OPEN) return;   // Kiểm tra trạng thái kết nối WebSocket
+    if (ws.readyState !== WebSocket.OPEN) return;
 
     try {
         ws.send("AUDIO_STREAM_START");
 
-        // Chuẩn bị header với format=wav để nhận WAV thay vì MP3
-        const headers = {
-            'api_key': FPT_TTS_API_KEY,
-            'voice': FPT_TTS_VOICE,
-            'format': 'wav',
-            'Cache-Control': 'no-cache'
-        };
+        const response = await axios.post('http://localhost:5001/tts', {
+            text: text,
+            voice: 'vi-VN-HoaiMyNeural',
+            rate: "+0%",
+            volume: "-50%"
+        }, {
+            responseType: 'arraybuffer',
+            timeout: 30000 // 30 giây timeout
+        });
 
-        // Gọi API FPT để chuyển text thành speech
-        const response = await axios.post(
-            'https://api.fpt.ai/hmi/tts/v5',
-            text,
-            { headers }
-        );
+        // Chuyển đổi phản hồi thành buffer
+        const audioBuffer = Buffer.from(response.data);
+        console.log(`Nhận được dữ liệu âm thanh: ${audioBuffer.length} bytes`);
 
-        if (response.data.error === 0) {    // Nếu không có lỗi từ API
-            const audioUrl = response.data.async;   // Lấy URL của file âm thanh đã tạo
+        // Chia nhỏ thành các chunk để gửi qua WebSocket
+        const audioChunks = chunkAudioData(audioBuffer, 2048);
+        console.log(`Chia thành ${audioChunks.length} đoạn âm thanh để gửi`);
 
-            // Chờ một chút để đảm bảo file đã được tạo xong
-            await new Promise(resolve => setTimeout(resolve, 10000));
-
-            // Tải file WAV từ URL
-            const audioResponse = await axios.get(audioUrl, { responseType: 'arraybuffer' });
-            const audioBuffer = Buffer.from(audioResponse.data);
-
-            // Chia thành các chunk và gửi qua WebSocket
-            const audioChunks = chunkAudioData(audioBuffer, 2048);
-
-            for (let i = 0; i < audioChunks.length; i++) {
-                if (ws.readyState !== WebSocket.OPEN) break;
-                ws.send(audioChunks[i]);
-                await new Promise(resolve => setTimeout(resolve, 50));
+        // Gửi từng chunk âm thanh qua WebSocket
+        for (let i = 0; i < audioChunks.length; i++) {
+            if (ws.readyState !== WebSocket.OPEN) {
+                console.log("WebSocket đã đóng, dừng phát âm thanh");
+                break;
             }
 
-            // Kết thúc stream
-            if (ws.readyState === WebSocket.OPEN) {
-                const silenceBuffer = Buffer.alloc(1600, 0); // 50ms of silence
-                ws.send(silenceBuffer);
-                await new Promise(resolve => setTimeout(resolve, 100));
-                ws.send("AUDIO_STREAM_END");
-            }
-        } else {
-            console.error("FPT TTS API Error:", response.data);
-            throw new Error(`FPT API error: ${response.data.message || 'Unknown error'}`);
+            ws.send(audioChunks[i]);
+
+            // Đợi một chút giữa các chunk để tránh buffer overflow
+            await new Promise(resolve => setTimeout(resolve, 30));
         }
-    } catch (error) {
-        console.error("Error sending TTS response:", error);
 
-        // Gửi thông báo lỗi nếu ws vẫn mở
+        // Kết thúc stream
         if (ws.readyState === WebSocket.OPEN) {
+            const silenceBuffer = Buffer.alloc(1600, 0); // 50ms silence
+            ws.send(silenceBuffer);
+            await new Promise(resolve => setTimeout(resolve, 100));
             ws.send("AUDIO_STREAM_END");
-            ws.send(`Error generating speech: ${error.message}`);
+        }
+
+    } catch (error) {
+        console.error("Lỗi gửi phản hồi TTS:", error);
+
+        // Phát âm thanh lỗi và gửi thông báo nếu ws vẫn mở
+        if (ws.readyState === WebSocket.OPEN) {
+            playSoundFile('./sound/tts_timeout.wav', ws);
+            ws.send("AUDIO_STREAM_END");
         }
     }
 }
+
+/**
+ * Gửi phản hồi TTS tới ESP32 sử dụng Edge TTS thông qua service Python, hàm này sẽ tách văn bản thành các đoạn nhỏ rồi gửi TTS để tốc độ phản hồi cao hơn.
+ * @param {string} text - Văn bản cần chuyển thành giọng nói
+ * @param {WebSocket} ws - WebSocket connection
+ */
+// async function sendTTSResponse(text, ws) {
+//     if (ws.readyState !== WebSocket.OPEN) return;
+
+//     try {
+//         console.log("Bắt đầu xử lý Edge TTS...");
+//         ws.send("AUDIO_STREAM_START");
+
+//         // Tách văn bản thành các đoạn nhỏ để xử lý nhanh hơn
+//         const textChunks = tachVanBanThanhDoan(text, 150);
+//         console.log(`Đã tách văn bản thành ${textChunks.length} đoạn`);
+
+//         // Theo dõi thứ tự phát và trạng thái
+//         let currentPlayingIndex = 0;
+//         let isPlayingChunk = false;
+//         const audioCache = new Map();
+
+//         // Hàm phát đoạn tiếp theo nếu có
+//         const playNextChunkIfAvailable = async () => {
+//             if (isPlayingChunk) return; // Đang phát một đoạn, đợi
+
+//             if (audioCache.has(currentPlayingIndex)) {
+//                 isPlayingChunk = true;
+//                 const audioData = audioCache.get(currentPlayingIndex);
+//                 audioCache.delete(currentPlayingIndex); // Xóa khỏi cache để giải phóng bộ nhớ
+
+//                 console.log(`Đang phát đoạn ${currentPlayingIndex + 1}/${textChunks.length}`);
+
+//                 // Chia nhỏ và gửi qua WebSocket
+//                 const audioChunks = chunkAudioData(audioData, 2048);
+//                 for (const chunk of audioChunks) {
+//                     if (ws.readyState !== WebSocket.OPEN) {
+//                         isPlayingChunk = false;
+//                         return;
+//                     }
+//                     ws.send(chunk);
+//                     await new Promise(resolve => setTimeout(resolve, 30));
+//                 }
+
+//                 // Thêm pause nhỏ giữa các đoạn
+//                 await new Promise(resolve => setTimeout(resolve, 50));
+
+//                 // Cập nhật index và tiếp tục kiểm tra đoạn tiếp theo
+//                 currentPlayingIndex++;
+//                 isPlayingChunk = false;
+//                 playNextChunkIfAvailable();
+//             }
+//         };
+
+//         // Xử lý song song các đoạn văn bản
+//         const processingPromises = textChunks.map((chunk, index) => {
+//             return (async () => {
+//                 try {
+//                     console.log(`Đang gọi Edge TTS cho đoạn ${index + 1}/${textChunks.length}`);
+
+//                     // Gọi API Python Edge TTS
+//                     const response = await axios.post('http://localhost:5001/tts', {
+//                         text: chunk,
+//                         voice: 'vi-VN-HoaiMyNeural',
+//                         rate: "+0%",
+//                         volume: "-50%"
+//                     }, {
+//                         responseType: 'arraybuffer'
+//                     });
+
+//                     // Chuyển đổi phản hồi thành buffer
+//                     const audioBuffer = Buffer.from(response.data);
+
+//                     // Lưu vào cache theo đúng thứ tự
+//                     audioCache.set(index, audioBuffer);
+
+//                     // Kiểm tra xem có thể phát ngay không
+//                     if (index === currentPlayingIndex) {
+//                         playNextChunkIfAvailable();
+//                     }
+//                 } catch (error) {
+//                     console.error(`Lỗi xử lý đoạn ${index + 1}:`, error.message);
+//                 }
+//             })();
+//         });
+
+//         // Đợi tất cả các đoạn xử lý xong hoặc thất bại
+//         await Promise.allSettled(processingPromises);
+
+//         // Đợi đến khi phát xong tất cả các đoạn
+//         const waitForAllChunksToPlay = async () => {
+//             while (currentPlayingIndex < textChunks.length) {
+//                 if (ws.readyState !== WebSocket.OPEN) break;
+//                 await new Promise(resolve => setTimeout(resolve, 100));
+//                 playNextChunkIfAvailable();
+//             }
+//         };
+
+//         // Đợi phát hết các đoạn
+//         await waitForAllChunksToPlay();
+
+//         // Kết thúc stream
+//         if (ws.readyState === WebSocket.OPEN) {
+//             const silenceBuffer = Buffer.alloc(1600, 0); // 50ms silence
+//             ws.send(silenceBuffer);
+//             await new Promise(resolve => setTimeout(resolve, 100));
+//             ws.send("AUDIO_STREAM_END");
+//         }
+//     } catch (error) {
+//         console.error("Lỗi gửi phản hồi TTS:", error);
+
+//         // Phát âm thanh lỗi và gửi thông báo nếu ws vẫn mở
+//         if (ws.readyState === WebSocket.OPEN) {
+//             playSoundFile('./sound/tts_timeout.wav', ws);
+//             ws.send("AUDIO_STREAM_END");
+//         }
+//     }
+// }
+
+/**
+ * Tách văn bản thành các đoạn nhỏ dựa trên dấu câu
+ * @param {string} text - Văn bản cần tách
+ * @param {number} maxLength - Độ dài tối đa mỗi đoạn
+ * @returns {string[]} - Mảng các đoạn văn bản
+ */
+// function tachVanBanThanhDoan(text, maxLength = 150) {
+//     // Xóa khoảng trắng thừa
+//     text = text.trim();
+
+//     // Nếu văn bản đủ ngắn, trả về nguyên văn
+//     if (text.length <= maxLength) {
+//         return [text];
+//     }
+
+//     // Tách theo dấu chấm trước
+//     const dauChamSplits = text.split(/(?<=\.)\s+/);
+//     const ketQua = [];
+//     let doanHienTai = '';
+
+//     for (const cau of dauChamSplits) {
+//         // Nếu câu ngắn, thêm vào đoạn hiện tại
+//         if (cau.length <= maxLength) {
+//             if (doanHienTai.length + cau.length + 1 <= maxLength) {
+//                 doanHienTai += (doanHienTai ? ' ' : '') + cau;
+//             } else {
+//                 // Nếu thêm vào sẽ quá dài, lưu đoạn hiện tại và bắt đầu đoạn mới
+//                 ketQua.push(doanHienTai);
+//                 doanHienTai = cau;
+//             }
+//         } else {
+//             // Nếu câu dài, tách tiếp theo dấu phẩy
+//             const dauPhaySplits = cau.split(/(?<=,)\s+/);
+
+//             for (const ve of dauPhaySplits) {
+//                 if (doanHienTai.length + ve.length + 1 <= maxLength) {
+//                     doanHienTai += (doanHienTai ? ' ' : '') + ve;
+//                 } else {
+//                     // Nếu vế quá dài, lưu đoạn hiện tại và bắt đầu đoạn mới
+//                     if (doanHienTai) ketQua.push(doanHienTai);
+
+//                     // Nếu vế vẫn dài hơn maxLength, chia nhỏ hơn nữa theo từng từ
+//                     if (ve.length > maxLength) {
+//                         let phanDu = ve;
+//                         while (phanDu.length > maxLength) {
+//                             // Tìm vị trí khoảng trắng gần nhất
+//                             let viTriCat = phanDu.lastIndexOf(' ', maxLength);
+//                             if (viTriCat <= 0) viTriCat = maxLength;
+
+//                             // Thêm phần đã cắt vào kết quả
+//                             ketQua.push(phanDu.substring(0, viTriCat).trim());
+//                             phanDu = phanDu.substring(viTriCat).trim();
+//                         }
+//                         doanHienTai = phanDu;
+//                     } else {
+//                         doanHienTai = ve;
+//                     }
+//                 }
+//             }
+//         }
+//     }
+
+//     // Thêm đoạn cuối cùng nếu còn
+//     if (doanHienTai) {
+//         ketQua.push(doanHienTai);
+//     }
+
+//     return ketQua;
+// }
+
+/**
+ * Bỏ header WAV (44 bytes đầu) nếu có
+ * @param {Buffer} audioBuffer - Buffer âm thanh
+ * @returns {Buffer} - Buffer PCM thuần túy
+ */
+// function stripWavHeader(audioBuffer) {
+//     // Kiểm tra xem có phải file WAV không
+//     const isWav = audioBuffer.length > 44 &&
+//         audioBuffer.toString('ascii', 0, 4) === 'RIFF' &&
+//         audioBuffer.toString('ascii', 8, 12) === 'WAVE';
+
+//     // Nếu là WAV, bỏ 44 byte header
+//     if (isWav) {
+//         console.log("Đã phát hiện header WAV, bỏ 44 byte đầu");
+//         return audioBuffer.slice(44);
+//     } else {
+//         return audioBuffer;
+//     }
+// }
 
 /**
  * Hàm gọi API Speech-to-Text của FPT AI sử dụng axios
@@ -579,55 +848,55 @@ async function callApiSpeechToText(audioBuffer, apiKey, ws = null, timeoutMs = 3
     }
 }
 
-// Hàm gọi PhoWhisper service
-async function transcribeAudio(audioBuffer) {
-    try {
-        // Tạo WAV header
-        const wavHeaderBuffer = createWavHeader(audioBuffer.length, {
-            numChannels: 1,
-            sampleRate: 16000,
-            bitsPerSample: 16
-        });
+// Hàm gọi PhoWhisper để dùng STT, nhưng hiện tại đang dùng API STT của FPT.
+// async function transcribeAudio(audioBuffer) {
+//     try {
+//         // Tạo WAV header
+//         const wavHeaderBuffer = createWavHeader(audioBuffer.length, {
+//             numChannels: 1,
+//             sampleRate: 16000,
+//             bitsPerSample: 16
+//         });
 
-        // Tạo file WAV đầy đủ
-        const wavData = Buffer.concat([wavHeaderBuffer, audioBuffer]);
+//         // Tạo file WAV đầy đủ
+//         const wavData = Buffer.concat([wavHeaderBuffer, audioBuffer]);
 
-        console.log(`Sending audio to PhoWhisper: ${wavData.length} bytes`);
+//         console.log(`Sending audio to PhoWhisper: ${wavData.length} bytes`);
 
-        // Tạo form data để gửi file
-        const formData = new FormData();
-        formData.append('audio', Buffer.from(wavData), {
-            filename: 'audio.wav',
-            contentType: 'audio/wav'
-        });
+//         // Tạo form data để gửi file
+//         const formData = new FormData();
+//         formData.append('audio', Buffer.from(wavData), {
+//             filename: 'audio.wav',
+//             contentType: 'audio/wav'
+//         });
 
-        try {
-            // Gọi API Python với timeout dài hơn
-            const response = await axios.post(PHOWHISPER_SERVICE_URL, formData, {
-                headers: {
-                    ...formData.getHeaders()
-                },
-                maxContentLength: Infinity,
-                maxBodyLength: Infinity,
-                timeout: 30000  // 30 giây timeout
-            });
+//         try {
+//             // Gọi API Python với timeout dài hơn
+//             const response = await axios.post(PHOWHISPER_SERVICE_URL, formData, {
+//                 headers: {
+//                     ...formData.getHeaders()
+//                 },
+//                 maxContentLength: Infinity,
+//                 maxBodyLength: Infinity,
+//                 timeout: 30000  // 30 giây timeout
+//             });
 
-            return response.data;
-        } catch (axiosError) {
-            if (axiosError.response) {
-                // Máy chủ đã phản hồi với mã lỗi
-                console.error("PhoWhisper service error details:",
-                    axiosError.response.status,
-                    axiosError.response.data);
-            }
-            throw axiosError;
-        }
-    } catch (error) {
-        playSoundFile('./sound/pho_whisper_timeout.wav', ws); // Phát âm thanh lỗi
-        console.error("Error calling PhoWhisper service:", error.message);
-        throw error;
-    }
-}
+//             return response.data;
+//         } catch (axiosError) {
+//             if (axiosError.response) {
+//                 // Máy chủ đã phản hồi với mã lỗi
+//                 console.error("PhoWhisper service error details:",
+//                     axiosError.response.status,
+//                     axiosError.response.data);
+//             }
+//             throw axiosError;
+//         }
+//     } catch (error) {
+//         playSoundFile('./sound/pho_whisper_timeout.wav', ws); // Phát âm thanh lỗi
+//         console.error("Error calling PhoWhisper service:", error.message);
+//         throw error;
+//     }
+// }
 
 // --- Xử lý kết nối Client ---
 wss.on('connection', (ws) => {
