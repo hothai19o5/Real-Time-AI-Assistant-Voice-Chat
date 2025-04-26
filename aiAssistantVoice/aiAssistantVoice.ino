@@ -734,7 +734,7 @@ void setup()
   Serial.println(WiFi.localIP());
 
   // Tạo hàng đợi Playback chứa con trỏ tới AudioChunk*
-  playAudioQueue = xQueueCreate(16, sizeof(AudioChunk *)); // Tạo hàng đợi với kích thước 16 chunk
+  playAudioQueue = xQueueCreate(32, sizeof(AudioChunk *)); // Tạo hàng đợi với kích thước 32 chunk, nếu dùng 16chunk sẽ không đủ.
   if (playAudioQueue == NULL)
   {
     Serial.println("Failed to create playAudio queue. Halting.");
