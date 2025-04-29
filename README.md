@@ -14,7 +14,7 @@
 
 - **ESP32** (thu & phát âm thanh)
 - **WebSocket** (giao tiếp thời gian thực)
-- **PhoWhisper** (speech-to-text) || **FPT** API (speech to text)
+- **PhoWhisper** (speech-to-text) || **FPT** API (speech to text) || **ElevenLabs** API (speech to text)
 - **Gemini** (AI chatbot)
 - **Edge TTS**
 
@@ -27,9 +27,10 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 - Wake word (sẽ cập nhật)
 - Xem thời gian hiện tại
 - Xem thời tiết hiện tại
-- Xem dự báo thời tiết (sẽ cập nhật)
+- Xem dự báo thời tiết
 - Phát nhạc ngẫu nhiên trong thư mục music
 - Phát bài nhạc cụ thể
+- Xem lịch dương/ âm
 
 ---
 
@@ -44,8 +45,9 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 - Nhận dữ liệu âm thanh từ **ESP32** qua WebSocket
 - Chuyển giọng nói thành văn bản bằng **PhoWhisper** STT chạy local, yêu cầu máy mạnh.
 - Chuyển giọng nói thành văn bản bằng **FPT** API STT, bản dùng thử 240 lượt/năm, **đang tìm cách thay thế**.
+- Chuyển giọng nói thành văn bản bằng **ElevenLabs** API STT, **đang thử nhiệm**.
 - Nhận dạng đó là lệnh hay là câu hỏi
-- Nếu là các lệnh Hỏi giờ, Xem thời tiết, Phát nhạc thì Server sẽ xử lý tương ứng
+- Nếu là các lệnh Hỏi giờ, Xem thời tiết, Phát nhạc, Xem ngày dương/ âm lịch thì Server sẽ xử lý tương ứng
 - Gửi câu hỏi text tới **Gemini** (Google AI) để nhận phản hồi text
 - Chuyển phản hồi text thành giọng nói với **Edge TTS**
 - Gửi lại âm thanh về **ESP32** để phát ra loa
@@ -61,7 +63,9 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
     │   ├── package.json
     │   ├── music/                      # Music files
     │   ├── sound/                      # Notification sound
+    │   ├── sound/                      # Sound Record and Sound TTS
     │   ├── edge_tts_server.py          # Sever python handler Edge TTS
+    │   ├── elevenlabs_stt_server.py    # Sever python handler ElevenLabs STT
     │   └── server.js                   # WebSocket server
     ├── phowhisper_service/
     │   ├── models/                     # Speech-to-Text model
@@ -126,7 +130,7 @@ Kết nối phần cứng:
       GND - GND
       L/R - GND
       WS - D15
-      SCK - D27
+      SCK - D14
   
 - **MAX98357A**
   
@@ -135,7 +139,7 @@ Kết nối phần cứng:
       SD - D26
       GAIN - GND
       DIN - D25
-      BCLK - D27
+      BCLK - D14
       LRC - D15
   
 - **Button**
