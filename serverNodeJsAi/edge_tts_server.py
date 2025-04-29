@@ -25,6 +25,10 @@ def text_to_speech():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         audio_data = loop.run_until_complete(generate_audio_data(text, voice, rate, volume))
+
+        #lưu file mp3 vào ./sound
+        with open('./sound_debug/sound_tts_received.mp3', 'wb') as f:
+            f.write(audio_data)
         
         # Chuyển đổi MP3 sang WAV sử dụng pydub
         mp3_audio = AudioSegment.from_mp3(io.BytesIO(audio_data))
