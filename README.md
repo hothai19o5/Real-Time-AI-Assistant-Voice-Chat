@@ -1,4 +1,4 @@
-# 🤖 Real-Time AI Voice Chat using ESP32 & WebSocket
+# Real-Time AI Voice Chat using ESP32 & WebSocket
 
 ![ESP32](https://img.shields.io/badge/ESP32-RealTime-lightblue)
 ![Node.js](https://img.shields.io/badge/Node.js-Server-yellowgreen)
@@ -8,7 +8,7 @@
 ![Gemini](https://img.shields.io/badge/Gemini-AI-green)
 ![FPT](https://img.shields.io/badge/FPT-TTS-blueviolet)
 
-## 🧠 Mô tả dự án
+## Mô tả dự án
 
 **Real-Time AI Voice Chat** là một hệ thống giao tiếp hai chiều bằng giọng nói giữa con người và trí tuệ nhân tạo. Dự án sử dụng:
 
@@ -22,34 +22,34 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 
 ---
 
-## 🚀 Tính năng
+## Tính năng
 - Hỏi Gemini
 - Wake word (sẽ cập nhật)
 - Xem thời gian hiện tại
 - Xem thời tiết hiện tại
 - Xem dự báo thời tiết
 - Phát nhạc ngẫu nhiên trong thư mục music
-- Phát bài nhạc cụ thể
+- Phát bài nhạc cụ thể (đang cập nhật)
 - Xem lịch dương/ âm
+- Màn hình hiển thị cảm xúc, ngày giờ, địa điểm, thời tiết (sẽ cập nhật)
 
 ---
 
-## 🏗️ Kiến trúc hệ thống
+## Kiến trúc hệ thống
 
-### 📡 ESP32
+### ESP32
 - Ghi âm bằng **INMP441**
 - Phát âm thanh bằng **MAX98357A**
 - Gửi và nhận dữ liệu âm thanh qua **WebSocket**
 
-### 🖥️ Server (Node.js)
+### Server (Node.js)
 - Nhận dữ liệu âm thanh từ **ESP32** qua WebSocket
 - Chuyển giọng nói thành văn bản bằng **PhoWhisper** STT chạy local, yêu cầu máy mạnh.
-- Chuyển giọng nói thành văn bản bằng **FPT** API STT, bản dùng thử 240 lượt/năm, **đang tìm cách thay thế**.
-- Chuyển giọng nói thành văn bản bằng **ElevenLabs** API STT, **đang thử nhiệm**.
+- Chuyển giọng nói thành văn bản bằng **ElevenLabs** API STT, **rất nhanh**.
 - Nhận dạng đó là lệnh hay là câu hỏi
 - Nếu là các lệnh Hỏi giờ, Xem thời tiết, Phát nhạc, Xem ngày dương/ âm lịch thì Server sẽ xử lý tương ứng
 - Gửi câu hỏi text tới **Gemini** (Google AI) để nhận phản hồi text
-- Chuyển phản hồi text thành giọng nói với **Edge TTS**
+- Chuyển phản hồi text thành giọng nói với **Edge TTS** (Cần sửa lại để tối ưu thời gian phản hồi)
 - Gửi lại âm thanh về **ESP32** để phát ra loa
 
 ---
@@ -108,9 +108,15 @@ python .\edge_tts_server.py
 ```
 
 ```bash
-cd .\phowhisper_service\
-python .\app.py
+cd .\serverNodeJsAi\
+python .\elevenlabs_stt_server.py
 ```
+
+```bash
+cd .\serverNodeJsAi\
+python .\edge_tts_server.py
+```
+
 ### 📲 ESP32
 Cài đặt các thư viện cần thiết
 
@@ -144,10 +150,7 @@ Kết nối phần cứng:
   
 - **Button**
   
-      D4
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/922f9d24-55e0-47dd-a36e-287696f1e439" alt="" width="60%">
-</p>
+      Recording - D4
+      Reset Config - D5
 
 **Đang cập nhật...**
