@@ -6,6 +6,7 @@ import path from 'path';        // Import path để xử lý đường dẫn fi
 import { GoogleGenerativeAI } from '@google/generative-ai';         // Import Google Generative AI SDK
 import axios from 'axios';      // Import axios để thực hiện các yêu cầu HTTP
 import FormData from 'form-data';       // Import FormData để gửi dữ liệu dạng form
+import CalendarCalculator from 'viet-lunar-calendar' // Tính toán ngày âm theo ngày dương
 
 // --- Cấu hình ---
 const PORT = 8080;                                              // Port server lắng nghe
@@ -35,7 +36,7 @@ if (!WEATHER_API_KEY) {
 }
 // Map các địa danh tiếng Việt sang tiếng Anh cho WeatherAPI
 const locationMap = {
-    "Hà Nội": "Hanoi", "Hồ Chí Minh": "Ho Chi Minh City", "Đà Nẵng": "Da Nang", "Cần Thơ": "Can Tho", "Hải Phòng": "Hai Phong", "Huế": "Hue", "Biên Hòa": "Bien Hoa", "Nha Trang": "Nha Trang", "Vũng Tàu": "Vung Tau", "Quảng Ninh": "Quang Ninh", "Thanh Hóa": "Thanh Hoa", "Nghệ An": "Nghe An", "Hà Tĩnh": "Ha Tinh", "Thái Nguyên": "Thai Nguyen", "Cà Mau": "Ca Mau", "Bắc Ninh": "Bac Ninh", "Nam Định": "Nam Dinh", "Bến Tre": "Ben Tre", "Long An": "Long An", "Kiên Giang": "Kien Giang", "Đồng Nai": "Dong Nai", "Hưng Yên": "Hung Yen", "Thái Bình": "Thai Binh", "Lạng Sơn": "Lang Son", "Lào Cai": "Lao Cai", "Hà Giang": "Ha Giang", "Điện Biên": "Dien Bien", "Kon Tum": "Kon Tum", "Gia Lai": "Gia Lai", "Đắk Lắk": "Dak Lak", "Đắk Nông": "Dak Nong", "Ninh Thuận": "Ninh Thuan", "Bình Thuận": "Binh Thuan", "Bắc Giang": "Bac Giang", "Hà Nam": "Ha Nam", "Quảng Bình": "Quang Binh", "Quảng Trị": "Quang Tri", "Thừa Thiên Huế": "Thua Thien Hue", "Sóc Trăng": "Soc Trang", "Trà Vinh": "Tra Vinh", "Hậu Giang": "Hau Giang", "Bạc Liêu": "Bac Lieu", "Đồng Tháp": "Dong Thap", "An Giang": "An Giang", "Tiền Giang": "Tien Giang", "Vĩnh Long": "Vinh Long", "Cao Bằng": "Cao Bang", "Tuyên Quang": "Tuyen Quang", "Yên Bái": "Yen Bai", "Phú Thọ": "Phu Tho", "Lai Châu": "Lai Chau", "Sơn La": "Son La", "Hòa Bình": "Hoa Binh", "Ninh Bình": "Ninh Binh",
+    "Hà Nội": "Hanoi", "Hồ Chí Minh": "Ho Chi Minh City", "Đà Nẵng": "Da Nang", "Cần Thơ": "Can Tho", "Hải Phòng": "Hai Phong", "Huế": "Hue", "Biên Hòa": "Bien Hoa", "Nha Trang": "Nha Trang", "Vũng Tàu": "Vung Tau", "Quảng Ninh": "Quang Ninh", "Thanh Hóa": "Thanh Hoa", "Nghệ An": "Nghe An", "Hà Tĩnh": "Ha Tinh", "Thái Nguyên": "Thai Nguyen", "Cà Mau": "Ca Mau", "Bắc Ninh": "Bac Ninh", "Nam Định": "Nam Dinh", "Bến Tre": "Ben Tre", "Long An": "Long An", "Kiên Giang": "Kien Giang", "Đồng Nai": "Dong Nai", "Hưng Yên": "Hung Yen", "Thái Bình": "Thai Binh", "Lạng Sơn": "Lang Son", "Lào Cai": "Lao Cai", "Hà Giang": "Ha Giang", "Điện Biên": "Dien Bien", "Kon Tum": "Kon Tum", "Gia Lai": "Gia Lai", "Đắk Lắk": "Dak Lak", "Đắk Nông": "Dak Nong", "Ninh Thuận": "Ninh Thuan", "Bình Thuận": "Binh Thuan", "Bắc Giang": "Bac Giang", "Hà Nam": "Ha Nam", "Quảng Bình": "Quang Binh", "Quảng Trị": "Quang Tri", "Thừa Thiên Huế": "Thua Thien Hue", "Sóc Trăng": "Soc Trang", "Trà Vinh": "Tra Vinh", "Hậu Giang": "Hau Giang", "Bạc Liêu": "Bac Lieu", "Đồng Tháp": "Dong Thap", "An Giang": "An Giang", "Tiền Giang": "Tien Giang", "Vĩnh Long": "Vinh Long", "Cao Bằng": "Cao Bang", "Tuyên Quang": "Tuyen Quang", "Yên Bái": "Yen Bai", "Phú Thọ": "Phu Tho", "Lai Châu": "Lai Chau", "Sơn La": "Son La", "Hòa Bình": "Hoa Binh", "Ninh Bình": "Ninh Binh", "thanh hóa": "Thanh Hoa",
 };
 
 // Khởi tạo Gemini
@@ -45,7 +46,7 @@ const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 const initialAssistantHistory = [
     {
         role: "user",
-        parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời trong vòng tối đa khoảng 150-200 chữ. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt." }],
+        parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời trong vòng tối đa khoảng 300 chữ. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt. Các câu trả lời không nên có các emoji hay kí tự đặc biệt." }],
     },
     {
         role: "model",
@@ -53,11 +54,11 @@ const initialAssistantHistory = [
     },
     // {
     //   role: "user",
-    //   parts: [{ text: "Nếu bạn thấy câu hỏi của tôi có ý nghĩa như `bật bài hát + tên_bài_hát` thì hãy đưa ra câu trả lời là `COMMAND bật bài hát tên_bài_hát` " }],
+    //   parts: [{ text: "Tôi thu âm thanh rồi chuyền về text nên một số câu lệnh có thể không rõ, nếu như bạn gặp 1 đoạn text trong có vẻ giống như câu lệnh thì hãy trả về dạng đúng của câu lệnh. Hiện tại tôi có 3 câu lệnh là xem thời tiết, xem thời gian, bật nhạc. Các câu lệnh đúng có dạng như sau: Thời tiết hôm nay; Thời tiết hôm nay ở + địa điểm; Mấy giờ rồi; Bây giờ là mấy giờ; Bật nhạc; Phát nhạc; Bật bài hát + tên bài hát" }],
     // },
     // {
     //   role: "model",
-    //   parts: [{ text: "Được thôi, ví dụ nếu câu hỏi của bạn là `bật anh là ai` thì tôi sẽ trả lời `COMMAND bật bài hát anh là ai`" }],
+    //   parts: [{ text: "Được thôi, ví dụ nếu câu hỏi của bạn là `bật anh là ai` thì tôi sẽ trả lời `bật bài hát anh là ai` hoặc nếu câu hỏi của bạn là `mấy giờ .` thì tôi sẽ trả lời là `Mấy giờ rồi`" }],
     // },
 ];
 
@@ -94,6 +95,13 @@ function cleanMarkdownFormatting(text) {
     text = text.replace(/\s+/g, ' ');
 
     return text.trim();
+}
+
+function formatTextSTT(text) {
+    return text
+        .toLowerCase() // Chuyển thành chữ thường
+        .replace(/[.,;?!]/g, '') // Bỏ các dấu ., ; ? !
+        .trim(); // Xóa khoảng trắng đầu cuối
 }
 
 // Hàm chia nhỏ dữ liệu âm thanh thành các chunk
@@ -154,11 +162,36 @@ function detectCommand(text) {
         };
     }
 
-    // Lọc lệnh xem thời tiết
-    if (normalizedText.includes('thời tiết hôm nay')) {
+    // Lọc lệnh xem thời tiết hôm nay
+    if (normalizedText.includes('thời tiết hôm nay') || normalizedText.includes('thời tiết hiện tại')) {
         return {
-            type: 'WEATHER',
+            type: 'WEATHER_CURRENT',
             location: extractLocation(normalizedText) || 'Hà Nội' // Lọc địa điểm từ lệnh, nếu không có thì mặc định là 'Hà Nội'
+        };
+    }
+
+    // Lọc lệnh xem dự báo thời tiết
+    if (normalizedText.includes('dự báo thời tiết ngày mai') || normalizedText.includes('thời tiết ngày mai')
+        || normalizedText.includes('dự báo thời tiết')) {
+        return {
+            type: 'WEATHER_FORECAST',
+            location: extractLocation(normalizedText) || 'Hà Nội' // Lọc địa điểm từ lệnh, nếu không có thì mặc định là 'Hà Nội'
+        }
+    }
+
+
+    // Lọc lệnh xem ngày tháng năm âm lịch
+    if (normalizedText.includes('hôm nay là ngày bao nhiêu âm lịch') || normalizedText.includes('hôm nay là ngày mấy âm lịch')
+        || normalizedText.includes('hôm nay âm lịch là ngày bao nhiêu') || normalizedText.includes('hôm nay âm lịch là ngày mấy')) {
+        return {
+            type: 'LUNAR_DATE'
+        };
+    }
+
+    // Lọc lệnh xem ngày tháng năm dương lịch
+    if (normalizedText.includes('hôm nay là ngày mấy') || normalizedText.includes('hôm nay là ngày bao nhiêu')) {
+        return {
+            type: 'DATE'
         };
     }
 
@@ -199,7 +232,8 @@ function extractSongName(text) {
 // Lọc địa điểm từ lệnh
 function extractLocation(text) {
     // Lọc theo mẫu "thời tiết hôm nay ở X" hoặc "thời tiết hôm nay tại X"
-    const weatherRegex = /thời tiết hôm nay\s+(ở|tại)?\s*(.+)/i;
+    const weatherRegex = /thời tiết hôm nay\s+(ở|tại)?\s*(.+)/i || /dự báo thời tiết ngày mai\s+(ở|tại)?\s*(.+)/i
+        || /thời tiết hiện tại\s+(ở|tại)?\s*(.+)/i || /thời tiết ngày mai\s+(ở|tại)?\s*(.+)/i;
     const match = text.match(weatherRegex);
 
     if (match && match[2]) {
@@ -311,14 +345,18 @@ async function handleMusicCommand(songName, ws) {
     }
 }
 
-// Hàm xứ lý gửi thông tin thời tiết tới ESP32
-async function handleWeatherCommand(location, ws) {
+// Hàm xứ lý gửi thông tin thời tiết hiện tại tới ESP32
+async function handleWeatherCommand(location, ws, type) {
     try {
         const weatherApiKey = WEATHER_API_KEY;
-        const weatherResponse = await fetchWeatherData(location, weatherApiKey);  // Gọi hàm lấy thông tin thời tiết
+        if (type == "CURRENT") {
+            const weatherResponse = await fetchWeatherData(location, weatherApiKey, "CURRENT");  // Gọi hàm lấy thông tin thời tiết
 
-        await sendTTSResponse(weatherResponse, ws);
-
+            await sendTTSResponse(weatherResponse, ws);
+        } else if (type == "FORECAST") {
+            const weatherResponse = await fetchWeatherData(location, weatherApiKey, "FORECAST");  // Gọi hàm lấy thông tin thời tiết
+            await sendTTSResponse(weatherResponse, ws);
+        }
     } catch (error) {
         console.error("Error handling weather command:", error);
         playSoundFile('./sound/khong_lay_duoc_thoi_tiet.wav', ws); // Phát âm thanh lỗi
@@ -347,39 +385,102 @@ async function handleTimeCommand(ws) {
 }
 
 // Hàm lấy thông tin thời tiết từ WeatherAPI.com
-async function fetchWeatherData(location, apiKey) {
+async function fetchWeatherData(location, apiKey, type) {
     // Lấy địa điểm từ trong map, nếu không tìm thấy thì auto trả về Hà Nội
     const queryLocation = locationMap[location] || 'Hanoi';
     try {
-        // Using WeatherAPI.com instead of OpenWeatherMap
-        const response = await axios.get(`https://api.weatherapi.com/v1/current.json`, {
-            params: {
-                q: queryLocation,
-                key: apiKey,
-                lang: 'vi'
-            }
-        });
+        if (type == "CURRENT") {
+            // Sử dụng API WeatherAPI.com
+            const response = await axios.get(`https://api.weatherapi.com/v1/current.json`, {
+                params: {
+                    q: queryLocation,
+                    key: apiKey,
+                    lang: 'vi'
+                }
+            });
 
-        const data = response.data;
+            const data = response.data;
 
-        const dataUV = data.current.uv < 3 ? "Thấp, An toàn" :
-            data.current.uv < 6 ? "Trung bình, Cẩn thận khi ở ngoài trời lâu" :
-                data.current.uv < 8 ? "Cao, Nên che chắn, dùng kem chống nắng" :
-                    data.current.uv < 11 ? "Rất cao, Hạn chế ra ngoài vào giờ nắng gắt" :
-                        "Nguy hiểm cực độ, Tránh tiếp xúc trực tiếp với ánh nắng";
+            const dataUV = data.current.uv < 3 ? "Thấp, An toàn" :
+                data.current.uv < 6 ? "Trung bình, Cẩn thận khi ở ngoài trời lâu" :
+                    data.current.uv < 8 ? "Cao, Nên che chắn, dùng kem chống nắng" :
+                        data.current.uv < 11 ? "Rất cao, Hạn chế ra ngoài vào giờ nắng gắt" :
+                            "Nguy hiểm cực độ, Tránh tiếp xúc trực tiếp với ánh nắng";
 
 
-        return `Thời tiết hiện tại ở ${queryLocation} là ${data.current.condition.text}. 
+            return `Thời tiết hiện tại ở ${queryLocation} là ${data.current.condition.text}. 
                 Nhiệt độ ${Math.round(data.current.temp_c)} độ xê,
                 Cảm giác như ${Math.round(data.current.feelslike_c)} độ xê, 
                 Chỉ số u vê ${dataUV},
-                Độ ẩm ${Math.round(data.current.humidity)} phần trăm,
-                Tầm nhìn ${Math.round(data.current.vis_km)} ki lô mét,
-                Áp suất ${Math.round(data.current.pressure_mb)} mi li ba, 
-                Tốc độ gió ${Math.round(data.current.wind_kph * 0.277778)} mét trên giây.`;
+                Độ ẩm ${Math.round(data.current.humidity)} phần trăm.`;
+        }
+        else if (type == "FORECAST") {
+            // Sử dụng API WeatherAPI.com
+            const response = await axios.get(`http://api.weatherapi.com/v1/forecast.json`, {
+                params: {
+                    q: queryLocation,
+                    key: apiKey,
+                    lang: 'vi'
+                }
+            });
+
+            const data = response.data;
+
+            const dataUV = data.current.uv < 3 ? "Thấp, An toàn" :
+                data.current.uv < 6 ? "Trung bình, Cẩn thận khi ở ngoài trời lâu" :
+                    data.current.uv < 8 ? "Cao, Nên che chắn, dùng kem chống nắng" :
+                        data.current.uv < 11 ? "Rất cao, Hạn chế ra ngoài vào giờ nắng gắt" :
+                            "Nguy hiểm cực độ, Tránh tiếp xúc trực tiếp với ánh nắng";
+
+
+            return `Dự báo thời tiết ngày mai ở ${queryLocation} là ${data.current.condition.text}. 
+                Nhiệt độ ${Math.round(data.current.temp_c)} độ xê,
+                Cảm giác như ${Math.round(data.current.feelslike_c)} độ xê, 
+                Chỉ số u vê ${dataUV},
+                Độ ẩm ${Math.round(data.current.humidity)} phần trăm.`;
+        }
     } catch (error) {
         console.error("Weather API error:", error);
         throw new Error("Không thể truy cập thông tin thời tiết");
+    }
+}
+
+// Hàm xử lý gửi thông tin ngày tháng năm dương lịch tới ESP32
+async function handleDateCommand(ws) {
+    try {
+        // Lấy ngày tháng năm hiện tại
+        const now = new Date();
+        const day = now.getDate();
+        const month = now.getMonth() + 1; // Tháng bắt đầu từ 0
+        const year = now.getFullYear();
+
+        // Tạo chuỗi phản hồi
+        const dateResponse = `Hôm nay là ngày ${day} tháng ${month} năm ${year}.`;
+
+        await sendTTSResponse(dateResponse, ws);
+
+    } catch (error) {
+        console.error("Error handling date command:", error);
+        playSoundFile('./sound/khong_thay_thong_tin_ngay_thang.wav', ws); // Phát âm thanh lỗi
+    }
+}
+
+// Hàm xử lý thông tin ngày tháng âm lịch
+async function handleLunarDateCommnad(ws) {
+    try {
+        // Lấy ngày tháng năm hiện tại
+        const now = new Date();
+
+        const lunar = new CalendarCalculator().getLunarDate(now);
+
+        // Tạo chuỗi phản hồi
+        const dateResponse = `Hôm nay âm lịch là ngày ${lunar.day} tháng ${lunar.month} năm ${lunar.year}.`;
+
+        await sendTTSResponse(dateResponse, ws);
+
+    } catch (error) {
+        console.error("Error handling date command:", error);
+        playSoundFile('./sound/khong_thay_thong_tin_ngay_thang.wav', ws); // Phát âm thanh lỗi
     }
 }
 
@@ -458,6 +559,10 @@ async function fetchWeatherData(location, apiKey) {
 async function sendTTSResponse(text, ws) {
     if (ws.readyState !== WebSocket.OPEN) return;
 
+
+    // Thời điểm bắt đầu xử lý TTS
+    const ttsStartTime = Date.now();
+
     try {
         ws.send("AUDIO_STREAM_START");
 
@@ -470,6 +575,12 @@ async function sendTTSResponse(text, ws) {
             responseType: 'arraybuffer',
             timeout: 30000 // 30 giây timeout
         });
+
+
+        // Thời điểm kết thúc xử lý TTS
+        const ttsEndTime = Date.now();
+        const ttsProcessingTime = ttsEndTime - ttsStartTime;
+        console.log(`TTS xử lý trong ${ttsProcessingTime} ms`);
 
         // Chuyển đổi phản hồi thành buffer
         const audioBuffer = Buffer.from(response.data);
@@ -516,7 +627,7 @@ async function sendTTSResponse(text, ws) {
  * @param {string} text - Văn bản cần chuyển thành giọng nói
  * @param {WebSocket} ws - WebSocket connection
  */
-// async function sendTTSResponse(text, ws) {
+// async function sendTTSResponse2(text, ws) {
 //     if (ws.readyState !== WebSocket.OPEN) return;
 
 //     try {
@@ -524,7 +635,7 @@ async function sendTTSResponse(text, ws) {
 //         ws.send("AUDIO_STREAM_START");
 
 //         // Tách văn bản thành các đoạn nhỏ để xử lý nhanh hơn
-//         const textChunks = tachVanBanThanhDoan(text, 150);
+//         const textChunks = tachVanBanThanhDoan(text, 200);
 //         console.log(`Đã tách văn bản thành ${textChunks.length} đoạn`);
 
 //         // Theo dõi thứ tự phát và trạng thái
@@ -632,72 +743,41 @@ async function sendTTSResponse(text, ws) {
 /**
  * Tách văn bản thành các đoạn nhỏ dựa trên dấu câu
  * @param {string} text - Văn bản cần tách
- * @param {number} maxLength - Độ dài tối đa mỗi đoạn
+ * @param {number} maxLength - Độ dài tối đa mỗi đoạn, tính theo ký tự
  * @returns {string[]} - Mảng các đoạn văn bản
  */
-// function tachVanBanThanhDoan(text, maxLength = 150) {
-//     // Xóa khoảng trắng thừa
-//     text = text.trim();
+function tachVanBanThanhDoan(text, maxLength = 150) {
+    // Xóa khoảng trắng thừa
+    text = text.trim();
 
-//     // Nếu văn bản đủ ngắn, trả về nguyên văn
-//     if (text.length <= maxLength) {
-//         return [text];
-//     }
+    // Nếu văn bản đủ ngắn, trả về nguyên văn
+    if (text.length <= maxLength) {
+        return [text];
+    }
 
-//     // Tách theo dấu chấm trước
-//     const dauChamSplits = text.split(/(?<=\.)\s+/);
-//     const ketQua = [];
-//     let doanHienTai = '';
+    // Tách theo dấu chấm trước
+    const dauChamSplits = text.split(/(?<=\.)\s+/);
+    const ketQua = [];
+    let doanHienTai = '';
 
-//     for (const cau of dauChamSplits) {
-//         // Nếu câu ngắn, thêm vào đoạn hiện tại
-//         if (cau.length <= maxLength) {
-//             if (doanHienTai.length + cau.length + 1 <= maxLength) {
-//                 doanHienTai += (doanHienTai ? ' ' : '') + cau;
-//             } else {
-//                 // Nếu thêm vào sẽ quá dài, lưu đoạn hiện tại và bắt đầu đoạn mới
-//                 ketQua.push(doanHienTai);
-//                 doanHienTai = cau;
-//             }
-//         } else {
-//             // Nếu câu dài, tách tiếp theo dấu phẩy
-//             const dauPhaySplits = cau.split(/(?<=,)\s+/);
+    for (const cau of dauChamSplits) {
+        // Nếu câu ngắn, thêm vào đoạn hiện tại
+        if (doanHienTai.length + cau.length <= maxLength) {
+            doanHienTai += (doanHienTai ? ' ' : '') + cau;
+        } else {
+            // Nếu thêm vào sẽ quá dài, lưu đoạn hiện tại và bắt đầu đoạn mới
+            ketQua.push(doanHienTai);
+            doanHienTai = cau;
+        }
+    }
 
-//             for (const ve of dauPhaySplits) {
-//                 if (doanHienTai.length + ve.length + 1 <= maxLength) {
-//                     doanHienTai += (doanHienTai ? ' ' : '') + ve;
-//                 } else {
-//                     // Nếu vế quá dài, lưu đoạn hiện tại và bắt đầu đoạn mới
-//                     if (doanHienTai) ketQua.push(doanHienTai);
+    // Thêm đoạn cuối cùng nếu còn
+    if (doanHienTai) {
+        ketQua.push(doanHienTai);
+    }
 
-//                     // Nếu vế vẫn dài hơn maxLength, chia nhỏ hơn nữa theo từng từ
-//                     if (ve.length > maxLength) {
-//                         let phanDu = ve;
-//                         while (phanDu.length > maxLength) {
-//                             // Tìm vị trí khoảng trắng gần nhất
-//                             let viTriCat = phanDu.lastIndexOf(' ', maxLength);
-//                             if (viTriCat <= 0) viTriCat = maxLength;
-
-//                             // Thêm phần đã cắt vào kết quả
-//                             ketQua.push(phanDu.substring(0, viTriCat).trim());
-//                             phanDu = phanDu.substring(viTriCat).trim();
-//                         }
-//                         doanHienTai = phanDu;
-//                     } else {
-//                         doanHienTai = ve;
-//                     }
-//                 }
-//             }
-//         }
-//     }
-
-//     // Thêm đoạn cuối cùng nếu còn
-//     if (doanHienTai) {
-//         ketQua.push(doanHienTai);
-//     }
-
-//     return ketQua;
-// }
+    return ketQua;
+}
 
 /**
  * Bỏ header WAV (44 bytes đầu) nếu có
@@ -720,8 +800,87 @@ async function sendTTSResponse(text, ws) {
 // }
 
 /**
- * Hàm gọi API Speech-to-Text của FPT AI sử dụng axios
+ * Hàm gọi server ElevenLabs STT
  * @param {Buffer} audioBuffer - Buffer chứa dữ liệu âm thanh PCM
+ * @param {WebSocket} ws - WebSocket để phát âm thanh lỗi (optional)
+ * @returns {Promise<Object>} Kết quả nhận dạng
+ */
+async function callElevenLabsSpeechToText(audioBuffer, ws, timeoutMs = 30000) {
+    if (!audioBuffer || audioBuffer.length === 0) {
+        const error = new Error('Không có dữ liệu âm thanh');
+        console.error(error.message);
+        return { success: false, error: error.message };
+    }
+
+    try {
+        // Tạo WAV header
+        const wavHeaderBuffer = createWavHeader(audioBuffer.length, {
+            numChannels: 1,
+            sampleRate: 16000,
+            bitsPerSample: 16
+        });
+
+        const wavData = Buffer.concat([wavHeaderBuffer, audioBuffer]);
+
+        // Tạo FormData để gửi file
+        const formData = new FormData();
+        formData.append('audio', Buffer.from(wavData), {
+            filename: 'audio.wav',
+            contentType: 'audio/wav'
+        });
+
+        const response = await axios.post(
+            'http://localhost:5002/stt',  // server python chạy ở localhost:5002, path /stt
+            formData,
+            {
+                headers: {
+                    ...formData.getHeaders()
+                },
+                timeout: timeoutMs
+            }
+        );
+
+        if (response.data.success) {
+            return {
+                success: true,
+                text: response.data.text
+            };
+        } else {
+            console.log(`ElevenLabs STT lỗi: ${response.data.error}`);
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                playSoundFile('./sound/stt_timeout.wav', ws);
+            }
+            return {
+                success: false,
+                error: response.data.error
+            };
+        }
+    } catch (error) {
+        console.error('Lỗi khi gọi ElevenLabs STT Server:', error.message || error);
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            playSoundFile('./sound/stt_timeout.wav', ws);
+        }
+
+        if (error.code === 'ECONNABORTED') {
+            return {
+                success: false,
+                error: `Timeout (${timeoutMs / 1000}s)`,
+                timedOut: true
+            };
+        }
+
+        return {
+            success: false,
+            error: error.message || 'Lỗi không xác định',
+            status: error.response?.status
+        };
+    }
+}
+
+/**
+ * Hàm gọi API Speech-to-Text của FPT AI sử dụng axios
+ * @param {Buffer} audioBuffer - Buffer chứa dữ liệu âm thanh WAV
  * @param {string} apiKey - API key của FPT AI
  * @param {WebSocket} ws - WebSocket để phát âm thanh lỗi (optional)
  * @returns {Promise<Object>} Kết quả nhận dạng
@@ -845,54 +1004,55 @@ async function callApiSpeechToText(audioBuffer, apiKey, ws = null, timeoutMs = 3
 }
 
 // Hàm gọi PhoWhisper để dùng STT, nhưng hiện tại đang dùng API STT của FPT.
-// async function transcribeAudio(audioBuffer) {
-//     try {
-//         // Tạo WAV header
-//         const wavHeaderBuffer = createWavHeader(audioBuffer.length, {
-//             numChannels: 1,
-//             sampleRate: 16000,
-//             bitsPerSample: 16
-//         });
+async function transcribeAudio(audioBuffer, ws) {
 
-//         // Tạo file WAV đầy đủ
-//         const wavData = Buffer.concat([wavHeaderBuffer, audioBuffer]);
+    try {
+        // Tạo WAV header
+        const wavHeaderBuffer = createWavHeader(audioBuffer.length, {
+            numChannels: 1,
+            sampleRate: 16000,
+            bitsPerSample: 16
+        });
 
-//         console.log(`Sending audio to PhoWhisper: ${wavData.length} bytes`);
+        // Tạo file WAV đầy đủ
+        const wavData = Buffer.concat([wavHeaderBuffer, audioBuffer]);
 
-//         // Tạo form data để gửi file
-//         const formData = new FormData();
-//         formData.append('audio', Buffer.from(wavData), {
-//             filename: 'audio.wav',
-//             contentType: 'audio/wav'
-//         });
+        console.log(`Sending audio to PhoWhisper: ${wavData.length} bytes`);
 
-//         try {
-//             // Gọi API Python với timeout dài hơn
-//             const response = await axios.post(PHOWHISPER_SERVICE_URL, formData, {
-//                 headers: {
-//                     ...formData.getHeaders()
-//                 },
-//                 maxContentLength: Infinity,
-//                 maxBodyLength: Infinity,
-//                 timeout: 30000  // 30 giây timeout
-//             });
+        // Tạo form data để gửi file
+        const formData = new FormData();
+        formData.append('audio', Buffer.from(wavData), {
+            filename: 'audio.wav',
+            contentType: 'audio/wav'
+        });
 
-//             return response.data;
-//         } catch (axiosError) {
-//             if (axiosError.response) {
-//                 // Máy chủ đã phản hồi với mã lỗi
-//                 console.error("PhoWhisper service error details:",
-//                     axiosError.response.status,
-//                     axiosError.response.data);
-//             }
-//             throw axiosError;
-//         }
-//     } catch (error) {
-//         playSoundFile('./sound/pho_whisper_timeout.wav', ws); // Phát âm thanh lỗi
-//         console.error("Error calling PhoWhisper service:", error.message);
-//         throw error;
-//     }
-// }
+        try {
+            // Gọi API Python với timeout dài hơn
+            const response = await axios.post(PHOWHISPER_SERVICE_URL, formData, {
+                headers: {
+                    ...formData.getHeaders()
+                },
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
+                timeout: 30000  // 30 giây timeout
+            });
+
+            return response.data;
+        } catch (axiosError) {
+            if (axiosError.response) {
+                // Máy chủ đã phản hồi với mã lỗi
+                console.error("PhoWhisper service error details:",
+                    axiosError.response.status,
+                    axiosError.response.data);
+            }
+            throw axiosError;
+        }
+    } catch (error) {
+        playSoundFile('./sound/pho_whisper_timeout.wav', ws); // Phát âm thanh lỗi
+        console.error("Error calling PhoWhisper service:", error.message);
+        throw error;
+    }
+}
 
 // --- Xử lý kết nối Client ---
 wss.on('connection', (ws) => {
@@ -922,22 +1082,55 @@ wss.on('connection', (ws) => {
             console.log('Received control message:', textMessage);
 
             if (textMessage === 'END_OF_STREAM') {  // Đã gửi xong âm thanh
+
+                // Phát ra âm thanh thông báo
+                playSoundFile('./sound/notification-20-270145.wav', ws);
+
                 // Ghép toàn bộ buffer lại
                 const fullAudioBuffer = Buffer.concat(audioChunks);
                 console.log(`Final audio size: ${fullAudioBuffer.length} bytes`);
 
+                // Tạo WAV header
+                const wavHeaderBuffer = createWavHeader(fullAudioBuffer.length, {
+                    numChannels: 1,
+                    sampleRate: 16000,
+                    bitsPerSample: 16
+                });
+
+                // Tạo file WAV đầy đủ
+                const wavData = Buffer.concat([wavHeaderBuffer, fullAudioBuffer]);
+
+                // Lưu lại file âm thanh nhận được
+                fs.writeFileSync('./sound_debug/received_audio.wav', wavData, (err) => {
+                    if (err) {
+                        console.error("Error saving audio file:", err);
+                    }
+                });
+                
                 try {
+                    // Thời điểm bắt đầu xử lý STT
+                    const sttStartTime = Date.now();
+
                     // Gọi PhoWhisper service để chuyển đổi âm thanh thành văn bản
                     // console.log("Calling PhoWhisper service...");
-                    // const transcriptionResult = await transcribeAudio(fullAudioBuffer);
+                    // const transcriptionResult = await transcribeAudio(fullAudioBuffer, ws);
                     // console.log("PhoWhisper Result:", transcriptionResult);
 
                     // Gọi FPT Speech-to-Text API để chuyển đổi âm thanh thành văn bản
-                    console.log("Calling FPT Speech-to-Text API...");
-                    const transcriptionResult = await callApiSpeechToText(fullAudioBuffer, FPT_STT_API_KEY, ws, 30000);
+                    // console.log("Calling FPT Speech-to-Text API...");
+                    // const transcriptionResult = await callApiSpeechToText(fullAudioBuffer, FPT_STT_API_KEY, ws, 30000);
+
+                    // Gọi ElevenLabs Speech to Text API để chuyển âm thanh thành văn bản
+                    console.log("Calling ElenvenLabs Speech to Text API...");
+                    const transcriptionResult = await callElevenLabsSpeechToText(fullAudioBuffer, ws, 30000);
+
+                    // Thời điểm kết thúc xử lý STT
+                    const sttEndTime = Date.now();
+                    const sttProcessingTime = sttEndTime - sttStartTime;
+                    console.log(`STT xử lý trong ${sttProcessingTime} ms`);
 
                     if (transcriptionResult.success && transcriptionResult.text) {
-                        const recognizedText = transcriptionResult.text;
+                        const recognizedText = formatTextSTT(transcriptionResult.text);
                         console.log(`Recognized Text: "${recognizedText}"`);
 
                         const commandResult = detectCommand(recognizedText);
@@ -946,9 +1139,21 @@ wss.on('connection', (ws) => {
                             console.log(`Music command detected for song: "${commandResult.songName}"`);
                             await handleMusicCommand(commandResult.songName, ws);
                         }
-                        else if (commandResult.type === 'WEATHER') {
+                        else if (commandResult.type === 'WEATHER_CURRENT') {
                             console.log(`Weather command detected for location: "${commandResult.location}"`);
-                            await handleWeatherCommand(commandResult.location, ws);
+                            await handleWeatherCommand(commandResult.location, ws, "CURRENT");
+                        }
+                        else if (commandResult.type === 'WEATHER_FORECAST') {
+                            console.log(`Weather forecast command detected for location: "${commandResult.location}"`);
+                            await handleWeatherCommand(commandResult.location, ws, "FORECAST");
+                        }
+                        else if (commandResult.type === 'DATE') {
+                            console.log(`Date command detected`);
+                            await handleDateCommand(ws);
+                        }
+                        else if (commandResult.type === 'LUNAR_DATE') {
+                            console.log(`Lunar date command detected`);
+                            await handleLunarDateCommnad(ws);
                         }
                         else if (commandResult.type === 'TIME') {
                             console.log(`Time command detected`);
@@ -989,7 +1194,7 @@ wss.on('connection', (ws) => {
                             }
                         }
                     } else {
-                        console.log("Empty transcription or error from PhoWhisper service");
+                        console.log("Empty transcription or error from STT service");
                         if (ws.readyState === WebSocket.OPEN) {
                             playSoundFile('./sound/xin_loi_toi_khong_nghe_ro_vui_long_thu_lai.wav', ws);
                         }
@@ -1031,9 +1236,9 @@ process.on('SIGINT', () => {
 
     // Đảm bảo rằng tất cả các kết nối WebSocket đều được đóng
     wss.clients.forEach(client => {
-        client.close(() => {
-            console.log("Client connection closed.");
-        });
+        if(client.readyState === 1) {
+            client.close(1001, "Server shutting down"); // 1001: Going Away
+        }
     });
 
     // Đóng WebSocket server
