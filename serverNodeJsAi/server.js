@@ -182,14 +182,16 @@ function detectCommand(text) {
 
     // Lọc lệnh xem ngày tháng năm âm lịch
     if (normalizedText.includes('hôm nay là ngày bao nhiêu âm lịch') || normalizedText.includes('hôm nay là ngày mấy âm lịch')
-        || normalizedText.includes('hôm nay âm lịch là ngày bao nhiêu') || normalizedText.includes('hôm nay âm lịch là ngày mấy')) {
+        || normalizedText.includes('hôm nay âm lịch là ngày bao nhiêu') || normalizedText.includes('hôm nay âm lịch là ngày mấy')
+        || normalizedText.includes('lịch âm hôm nay')) {
         return {
             type: 'LUNAR_DATE'
         };
     }
 
     // Lọc lệnh xem ngày tháng năm dương lịch
-    if (normalizedText.includes('hôm nay là ngày mấy') || normalizedText.includes('hôm nay là ngày bao nhiêu')) {
+    if (normalizedText.includes('hôm nay là ngày mấy') || normalizedText.includes('hôm nay là ngày bao nhiêu')
+        || normalizedText.includes('lịch dương hôm nay')) {
         return {
             type: 'DATE'
         };
@@ -1084,7 +1086,7 @@ wss.on('connection', (ws) => {
             if (textMessage === 'END_OF_STREAM') {  // Đã gửi xong âm thanh
 
                 // Phát ra âm thanh thông báo
-                playSoundFile('./sound/notification-20-270145.wav', ws);
+                // playSoundFile('./sound/notification-20-270145.wav', ws);
 
                 // Ghép toàn bộ buffer lại
                 const fullAudioBuffer = Buffer.concat(audioChunks);
