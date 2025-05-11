@@ -7,6 +7,10 @@
 #include <WebServer.h>   // Thư viện WebServer cho ESP32, cung cấp các hàm để tạo web server như on, begin, send, v.v.
 #include <DNSServer.h>   // Thư viện DNSServer cho ESP32, cung cấp các hàm để tạo DNS server như start, stop, v.v.
 #include <Preferences.h> // Thư viện Preferences cho ESP32, cung cấp các hàm để lưu trữ và truy xuất dữ liệu trong bộ nhớ flash như begin, putString, getString, v.v.
+#include <TFT_eSPI.h>
+#include <frame.h>
+
+TFT_eSPI tft = TFT_eSPI();
 
 Preferences preferences; // Khởi tạo đối tượng Preferences để lưu trữ và truy xuất dữ liệu trong bộ nhớ flash
 
@@ -75,6 +79,17 @@ unsigned long resetButtonPressStartTime = 0; // Thời gian bắt đầu nhấn 
 #define DEBOUNCE_TIME 50                     // Thời gian chống dội (50ms)
 #define RESET_BUTTON_HOLD_TIME 2000          // Thời gian nhấn nút reset WiFi (2s)
 
+unsigned long lastFrameTime = 0;
+int speakFrameIndex = 0;
+int listenFrameIndex = 0;
+bool isSpeaking = false;
+bool isListening = false;
+
+uint8_t eyeSpeak[15] = {1, 1, 1, 1, 1, 1, 2, 3, 4, 5, 4, 3, 1, 1, 1};
+uint8_t mouthSpeak[15] = {8, 9, 10, 9, 11, 9, 10, 8, 9, 10, 9, 11, 9, 8, 10};
+uint8_t eyeListen[15] = {1, 2, 3, 4, 5, 4, 3, 2, 1, 6, 7, 6, 7, 6, 7};
+uint8_t markListen[15] = {0, 0, 0, 0, 12, 13, 14, 15, 16, 15, 14, 13, 12, 13, 14};
+
 // Biến để theo dõi chế độ I2S hiện tại
 // Mic sử dụng 32-bit, Speaker sử dụng 16-bit => không dùng chung được 1 lần khởi tạo I2S
 // Mỗi lần muốn sử dụng cái nào thì cần khởi tạo lại I2S
@@ -94,6 +109,8 @@ unsigned long recordingStartTime = 0; // Thời gian bắt đầu ghi âm
 TaskHandle_t recordTaskHandle = NULL; // Task ghi âm
 
 TaskHandle_t playAudioTaskHandle = NULL; // Task phát âm thanh
+
+TaskHandle_t displayImageTaskHandle = NULL; // Task hiển thị ảnh
 
 QueueHandle_t playAudioQueue = NULL; // Hàng đợi phát âm thanh
 
@@ -529,11 +546,16 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
   case WStype_TEXT:                                         // Nhận dữ liệu dạng văn bản (lệnh) từ WebSocket
     if (strcmp((char *)payload, "AUDIO_STREAM_START") == 0) // Lệnh báo bắt đàu phát âm thanh
     {
+      isSpeaking = true;
+      speakFrameIndex = 0;
+      lastFrameTime = millis();
       digitalWrite(LED_PLAY, HIGH);
     }
     else if (strcmp((char *)payload, "AUDIO_STREAM_END") == 0) // Lệnh báo phát hết âm thanh
     {
       digitalWrite(LED_PLAY, LOW);
+      isSpeaking = false;
+      tft.fillScreen(TFT_BLACK);
     }
     break;
 
@@ -890,6 +912,9 @@ esp_err_t configure_i2s_for_speaker()
  */
 void recordAndSendTask(void *parameter)
 {
+  isListening = true;
+  listenFrameIndex = 0;
+  lastFrameTime = millis();
   Serial.println("Recording task started...");
 
   // Chuyển I2S sang chế độ mic
@@ -992,6 +1017,9 @@ void recordAndSendTask(void *parameter)
     }
   }
 
+  isListening = false;
+  tft.fillScreen(TFT_BLACK);
+
 cleanup:
   // Giải phóng bộ đệm và dừng ghi âm
   Serial.println("Recording finished after 5 seconds.");
@@ -1028,6 +1056,7 @@ void playAudioTask(void *parameter)
   bool speaker_mode_active = false;  // Trạng thái loa đang hoạt động hay không
   unsigned long lastAudioTime = 0;   // Thời gian nhận audio gần nhất, nếu không nhận được âm thanh trong 1.5 giây thì sẽ chuyển về chế độ I2S IDLE
   unsigned long lastMemoryCheck = 0; // Thời gian kiểm tra bộ nhớ gần nhất, để quản lý bộ nhớ
+  isSpeaking = true;
 
   while (true)
   {
@@ -1098,6 +1127,7 @@ void playAudioTask(void *parameter)
           switch_i2s_mode(I2S_MODE_IDLE);
           digitalWrite(SPEAKER_SD_PIN, LOW); // Tắt loa
           speaker_mode_active = false;       // Đặt lại trạng thái loa
+          // isSpeaking = false;
 
           delay(100);
         }
@@ -1127,13 +1157,13 @@ void playAudioTask(void *parameter)
 
         // --- TĂNG GIẢM ÂM LƯỢNG ---
         // Dữ liệu là 16-bit PCM (2 byte mỗi mẫu)
-        // int16_t *audio_samples = (int16_t *)chunk->data;
-        // int samples_count = chunk->length / 2; // Số lượng mẫu 16-bit
-        // // Điều chỉnh biên độ của mỗi mẫu âm thanh
-        // for (int i = 0; i < samples_count; i++)
-        // {
-        //   audio_samples[i] = audio_samples[i] * 1; // Tăng giảm hệ số
-        // }
+        int16_t *audio_samples = (int16_t *)chunk->data;
+        int samples_count = chunk->length / 2; // Số lượng mẫu 16-bit
+        // Điều chỉnh biên độ của mỗi mẫu âm thanh
+        for (int i = 0; i < samples_count; i++)
+        {
+          audio_samples[i] = audio_samples[i] * 0.8; // Tăng giảm hệ số
+        }
 
         // Ghi dữ liệu ra I2S
         esp_err_t write_result = i2s_write(I2S_PORT, chunk->data, chunk->length, &bytes_written, pdMS_TO_TICKS(1000));
@@ -1173,6 +1203,7 @@ void playAudioTask(void *parameter)
         digitalWrite(SPEAKER_SD_PIN, LOW); // Tắt loa
         // Xóa queue để đảm bảo không còn dữ liệu cũ
         xQueueReset(playAudioQueue);
+        // isSpeaking = false;
       }
     }
   }
@@ -1190,6 +1221,54 @@ void initializeWebSocket()
   webSocket.enableHeartbeat(10000, 2000, 3); // Thời gian heartbeat 10 giây, timeout 2 giây, thử lại 3 lần, heartbeat sẽ tự động gửi ping/pong để kiểm tra kết nối
 }
 
+void updateDisplaySpeak()
+{
+  if (!isSpeaking)
+    return;
+
+  unsigned long now = millis();
+  if (now - lastFrameTime >= 100)
+  {
+    lastFrameTime = now;
+
+    tft.pushImage(20, 60, 90, 90, myBitmapArray[eyeSpeak[speakFrameIndex] - 1]);
+    tft.pushImage(125, 60, 90, 90, myBitmapArray[eyeSpeak[speakFrameIndex] - 1]);
+    tft.pushImage(80, 150, 80, 80, myBitmapArray[mouthSpeak[speakFrameIndex] - 1]);
+
+    speakFrameIndex++;
+    if (speakFrameIndex >= 15)
+    {
+      speakFrameIndex = 0;
+    }
+  }
+}
+
+void updateDisplayListen()
+{
+  if (!isListening)
+    return;
+
+  unsigned long now = millis();
+  if (now - lastFrameTime >= 100)
+  {
+    lastFrameTime = now;
+
+    if (listenFrameIndex >= 4)
+    {
+      tft.pushImage(165, 0, 60, 60, myBitmapArray[markListen[listenFrameIndex] - 1]);
+    }
+
+    tft.pushImage(20, 60, 90, 90, myBitmapArray[eyeListen[listenFrameIndex] - 1]);
+    tft.pushImage(125, 60, 90, 90, myBitmapArray[eyeListen[listenFrameIndex] - 1]);
+
+    listenFrameIndex++;
+    if (listenFrameIndex >= 15)
+    {
+      listenFrameIndex = 0;
+    }
+  }
+}
+
 /**
  * Hàm setup() được gọi khi khởi động ESP32
  * @note Hàm này sẽ được gọi một lần duy nhất khi khởi động ESP32
@@ -1198,6 +1277,10 @@ void initializeWebSocket()
 void setup()
 {
   Serial.begin(115200); // Khởi động Serial với tốc độ 115200 bps
+
+  tft.init();
+  tft.setRotation(0);
+  tft.fillScreen(TFT_BLACK);
 
   preferences.begin("wifi", true); // Khởi động Preferences để lưu trữ thông tin WiFi với trạng thái chỉ đọc
   // Lấy thông tin WiFi từ Preferences
@@ -1309,6 +1392,9 @@ void setup()
 // --- Loop ---
 void loop()
 {
+  updateDisplaySpeak();
+  updateDisplayListen();
+  
   while (!wifiConnected)
   {
     /**
@@ -1405,7 +1491,7 @@ void loop()
         delay(100);
       }
 
-      resetWiFiSettings();  // Hàm này sẽ xóa thông tin Config trong Preferences và khởi động lại ESP32
+      resetWiFiSettings(); // Hàm này sẽ xóa thông tin Config trong Preferences và khởi động lại ESP32
     }
     // Nếu thả nút nhấn, đặt lại trạng thái nút nhấn
     if (!currentResetButtonState && resetButtonPressed)
