@@ -20,7 +20,6 @@
 
 Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 
----
 
 ## Tính năng
 - Hỏi Gemini
@@ -29,11 +28,11 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 - Xem thời tiết hiện tại
 - Xem dự báo thời tiết
 - Phát nhạc ngẫu nhiên trong thư mục music
-- Phát bài nhạc cụ thể (đang cập nhật)
+- Phát bài nhạc cụ thể
 - Xem lịch dương/ âm
-- Màn hình hiển thị cảm xúc, ngày giờ, địa điểm, thời tiết (sẽ cập nhật)
+- Màn hình hiển thị cảm xúc
+- Màn hình hiển thị ngày giờ, địa điểm, thời tiết (sẽ cập nhật)
 
----
 
 ## Kiến trúc hệ thống
 
@@ -41,6 +40,7 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 - Ghi âm bằng **INMP441**
 - Phát âm thanh bằng **MAX98357A**
 - Gửi và nhận dữ liệu âm thanh qua **WebSocket**
+- Hiển thị cảm xúc lên màn hình **TFT**
 
 ### Server (Node.js)
 - Nhận dữ liệu âm thanh từ **ESP32** qua WebSocket
@@ -52,9 +52,8 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 - Chuyển phản hồi text thành giọng nói với **Edge TTS** (Cần sửa lại để tối ưu thời gian phản hồi)
 - Gửi lại âm thanh về **ESP32** để phát ra loa
 
----
 
-## 📁 Cấu trúc thư mục
+## Cấu trúc thư mục
     real-time-voice-chat
     ├── serverNodeJsAi/
     │   ├── node_modules/
@@ -72,14 +71,14 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
     │   ├── app.py                      # Speech-to-Text
     │   └── requirements.txt                   
     ├── aiAssistantVoice/
+    │   ├── frame.h                     # Animation Array C
     │   └── aiAssistantVoice.cpp        # Esp32 C++
     ├── .gitignore
     └── README.md
----
 
-## ⚙️ Hướng dẫn cài đặt
+## Hướng dẫn cài đặt
 
-### 🔧 Server (Node.js)
+### Server (Node.js)
 
 Cài các dependency:
 ```bash
@@ -117,7 +116,7 @@ cd .\serverNodeJsAi\
 python .\edge_tts_server.py
 ```
 
-### 📲 ESP32
+### ESP32
 Cài đặt các thư viện cần thiết
 
 Sử dụng **Arduino IDE**
@@ -127,30 +126,43 @@ Sử dụng **Arduino IDE**
     freertos/FreeRTOS.h
     freertos/task.h
     driver/i2s.h
+    TFT_eSPI.h
 
 Kết nối phần cứng:
 - **INMP441**
   
-      SD - D32
-      VDD - 3.3V
-      GND - GND
-      L/R - GND
-      WS - D15
-      SCK - D14
+      SD      -     D32
+      VDD     -     3.3V
+      GND     -     GND
+      L/R     -     GND
+      WS      -     D15
+      SCK     -     D14
   
 - **MAX98357A**
   
-      Vin - 3.3V
-      GND - GND
-      SD - D26
-      GAIN - GND
-      DIN - D25
-      BCLK - D14
-      LRC - D15
+      Vin     -     3.3V
+      GND     -     GND
+      SD      -     D26
+      GAIN    -     GND
+      DIN     -     D25
+      BCLK    -     D14
+      LRC     -     D15
+
+- **TFT 1.54 Inch**
+  
+      Vin     -     3.3V
+      GND     -     GND
+      SCL     -     D18
+      SDA     -     D23
+      RST     -     D33
+      DC      -     D27
+      CS      -     D13
+      BL      -     D12
   
 - **Button**
   
-      Recording - D4
-      Reset Config - D5
+      Recording        -     D17
+      Reset Config     -     D16
+
 
 **Đang cập nhật...**
