@@ -46,7 +46,7 @@ const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 const initialAssistantHistory = [
     {
         role: "user",
-        parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời trong vòng tối đa khoảng 300 chữ. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt. Các câu trả lời không nên có các emoji hay kí tự đặc biệt." }],
+        parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời trong vòng tối đa khoảng 500 chữ. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt. Các câu trả lời không nên có các emoji hay kí tự đặc biệt. Câu trả lời chỉ có ngắt câu bằng dấu chấm và dấu phẩy, không dùng các dấu như **, *,... Câu trả lời chỉ cần diễn đạt trên 1 dòng dài, không cần các ký tự xuống dòng." }],
     },
     {
         role: "model",
@@ -411,9 +411,9 @@ async function fetchWeatherData(location, apiKey, type) {
 
 
             return `Thời tiết hiện tại ở ${queryLocation} là ${data.current.condition.text}. 
-                Nhiệt độ ${Math.round(data.current.temp_c)} độ xê,
-                Cảm giác như ${Math.round(data.current.feelslike_c)} độ xê, 
-                Chỉ số u vê ${dataUV},
+                Nhiệt độ ${Math.round(data.current.temp_c)} độ xê.
+                Cảm giác như ${Math.round(data.current.feelslike_c)} độ xê. 
+                Chỉ số u vê ${dataUV}.
                 Độ ẩm ${Math.round(data.current.humidity)} phần trăm.`;
         }
         else if (type == "FORECAST") {
@@ -553,6 +553,94 @@ async function handleLunarDateCommnad(ws) {
 //     }
 // }
 
+function splitTextToChunks(text) {
+    const sentences = text.split(/(?<=[.?!])\s+/); // tách theo dấu kết thúc câu
+    const chunks = [];
+
+    for (let sentence of sentences) {
+        const words = sentence.trim().split(/\s+/);
+        if (words.length > 0) {
+            chunks.push(sentence.trim());
+        }
+    }
+
+    return chunks;
+}
+
+/**
+ * Gửi phản hồi TTS tới ESP32 sử dụng Edge TTS thông qua service Python
+ * @param {string} text - Văn bản cần chuyển thành giọng nói
+ * @param {WebSocket} ws - WebSocket connection
+ */
+// async function sendTTSResponse(text, ws) {
+//     if (ws.readyState !== WebSocket.OPEN) return;
+
+//     const textChunks = splitTextToChunks(text, 10); // Tách văn bản thành các đoạn nhỏ
+
+//     // Thời điểm bắt đầu xử lý TTS
+//     const ttsStartTime = Date.now();
+
+//     try {
+
+//         const response = await axios.post('http://localhost:5001/tts', {
+//             text: text,
+//             voice: 'vi-VN-HoaiMyNeural',
+//             rate: "+15%",
+//             volume: "+0%"
+//         }, {
+//             responseType: 'arraybuffer',
+//             timeout: 15000 // 15 giây timeout
+//         });
+
+
+//         // Thời điểm kết thúc xử lý TTS
+//         const ttsEndTime = Date.now();
+//         const ttsProcessingTime = ttsEndTime - ttsStartTime;
+//         console.log(`TTS xử lý trong ${ttsProcessingTime} ms`);
+
+//         // Chuyển đổi phản hồi thành buffer
+//         const audioBuffer = Buffer.from(response.data);
+//         console.log(`Nhận được dữ liệu âm thanh: ${audioBuffer.length} bytes`);
+
+//         // Chia nhỏ thành các chunk để gửi qua WebSocket
+//         const audioChunks = chunkAudioData(audioBuffer, 2048);
+//         console.log(`Chia thành ${audioChunks.length} đoạn âm thanh để gửi`);
+
+//         // Gửi thông báo bắt đầu stream
+//         ws.send("AUDIO_STREAM_START");
+
+//         // Gửi từng chunk âm thanh qua WebSocket
+//         for (let i = 0; i < audioChunks.length; i++) {
+//             if (ws.readyState !== WebSocket.OPEN) {
+//                 console.log("WebSocket đã đóng, dừng phát âm thanh");
+//                 break;
+//             }
+
+//             ws.send(audioChunks[i]);
+
+//             // Đợi một chút giữa các chunk để tránh buffer overflow
+//             await new Promise(resolve => setTimeout(resolve, 50));
+//         }
+
+//         // Kết thúc stream
+//         if (ws.readyState === WebSocket.OPEN) {
+//             const silenceBuffer = Buffer.alloc(1600, 0); // 50ms silence
+//             ws.send(silenceBuffer);
+//             await new Promise(resolve => setTimeout(resolve, 100));
+//             ws.send("AUDIO_STREAM_END");
+//         }
+
+//     } catch (error) {
+//         console.error("Lỗi gửi phản hồi TTS:", error);
+
+//         // Phát âm thanh lỗi và gửi thông báo nếu ws vẫn mở
+//         if (ws.readyState === WebSocket.OPEN) {
+//             playSoundFile('./sound/tts_timeout.wav', ws);
+//             ws.send("AUDIO_STREAM_END");
+//         }
+//     }
+// }
+
 /**
  * Gửi phản hồi TTS tới ESP32 sử dụng Edge TTS thông qua service Python
  * @param {string} text - Văn bản cần chuyển thành giọng nói
@@ -561,57 +649,100 @@ async function handleLunarDateCommnad(ws) {
 async function sendTTSResponse(text, ws) {
     if (ws.readyState !== WebSocket.OPEN) return;
 
+    const textChunks = splitTextToChunks(text, 10); // Tách văn bản thành các đoạn nhỏ
+    console.log(`Đã tách văn bản thành ${textChunks.length} đoạn để xử lý TTS`);
 
     // Thời điểm bắt đầu xử lý TTS
     const ttsStartTime = Date.now();
 
     try {
+        // Gửi thông báo bắt đầu stream
         ws.send("AUDIO_STREAM_START");
 
-        const response = await axios.post('http://localhost:5001/tts', {
-            text: text,
-            voice: 'vi-VN-HoaiMyNeural',
-            rate: "+0%",
-            volume: "+0%"
-        }, {
-            responseType: 'arraybuffer',
-            timeout: 30000 // 30 giây timeout
+        // Tạo hàng đợi chứa các buffer âm thanh đã tạo
+        const audioBuffers = {};
+        let nextIndexToPlay = 0;
+        let isProcessingQueue = false;
+        let allChunksProcessed = false;
+
+        // Hàm gửi dữ liệu âm thanh từ hàng đợi qua WebSocket
+        const processAudioQueue = async () => {
+            if (isProcessingQueue) return;
+            
+            isProcessingQueue = true;
+            
+            while (audioBuffers[nextIndexToPlay] !== undefined) {
+                if (ws.readyState !== WebSocket.OPEN) {
+                    isProcessingQueue = false;
+                    return;
+                }
+                
+                const audioBuffer = audioBuffers[nextIndexToPlay];
+                // Xóa buffer đã xử lý để giải phóng bộ nhớ
+                delete audioBuffers[nextIndexToPlay];
+                nextIndexToPlay++;
+                
+                console.log(`Đang phát đoạn ${nextIndexToPlay}/${textChunks.length}`);
+                
+                const audioChunks = chunkAudioData(audioBuffer, 2048);
+                for (const chunk of audioChunks) {
+                    ws.send(chunk);
+                    // Đợi một chút giữa các chunk để tránh buffer overflow
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                }
+            }
+            
+            isProcessingQueue = false;
+            
+            // Nếu đã xử lý hết tất cả các đoạn và hàng đợi rỗng, kết thúc stream
+            if (allChunksProcessed && nextIndexToPlay >= textChunks.length && ws.readyState === WebSocket.OPEN) {
+                const silenceBuffer = Buffer.alloc(1600, 0); // 50ms silence
+                ws.send(silenceBuffer);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                ws.send("AUDIO_STREAM_END");
+                
+                // Thời điểm kết thúc xử lý TTS
+                const ttsEndTime = Date.now();
+                const ttsProcessingTime = ttsEndTime - ttsStartTime;
+                console.log(`TTS xử lý xong trong ${ttsProcessingTime} ms`);
+            }
+        };
+
+        // Xử lý song song việc tạo TTS cho các đoạn văn bản
+        const processingPromises = textChunks.map(async (chunk, index) => {
+            try {
+                console.log(`Đang xử lý TTS cho đoạn ${index + 1}/${textChunks.length}`);
+                
+                const response = await axios.post('http://localhost:5001/tts', {
+                    text: chunk,
+                    voice: 'vi-VN-HoaiMyNeural',
+                    rate: "+15%",
+                    volume: "-70%"
+                }, {
+                    responseType: 'arraybuffer',
+                    timeout: 15000 // 15 giây timeout
+                });
+                
+                // Chuyển đổi phản hồi thành buffer
+                const audioBuffer = Buffer.from(response.data);
+                console.log(`Đoạn ${index + 1} đã hoàn thành: ${audioBuffer.length} bytes`);
+                
+                // Lưu buffer vào đúng vị trí theo index
+                audioBuffers[index] = audioBuffer;
+
+                processAudioQueue();
+                
+            } catch (error) {
+                console.error(`Lỗi khi xử lý đoạn ${index + 1}:`, error.message);
+            }
         });
 
-
-        // Thời điểm kết thúc xử lý TTS
-        const ttsEndTime = Date.now();
-        const ttsProcessingTime = ttsEndTime - ttsStartTime;
-        console.log(`TTS xử lý trong ${ttsProcessingTime} ms`);
-
-        // Chuyển đổi phản hồi thành buffer
-        const audioBuffer = Buffer.from(response.data);
-        console.log(`Nhận được dữ liệu âm thanh: ${audioBuffer.length} bytes`);
-
-        // Chia nhỏ thành các chunk để gửi qua WebSocket
-        const audioChunks = chunkAudioData(audioBuffer, 2048);
-        console.log(`Chia thành ${audioChunks.length} đoạn âm thanh để gửi`);
-
-        // Gửi từng chunk âm thanh qua WebSocket
-        for (let i = 0; i < audioChunks.length; i++) {
-            if (ws.readyState !== WebSocket.OPEN) {
-                console.log("WebSocket đã đóng, dừng phát âm thanh");
-                break;
-            }
-
-            ws.send(audioChunks[i]);
-
-            // Đợi một chút giữa các chunk để tránh buffer overflow
-            await new Promise(resolve => setTimeout(resolve, 50));
-        }
-
-        // Kết thúc stream
-        if (ws.readyState === WebSocket.OPEN) {
-            const silenceBuffer = Buffer.alloc(1600, 0); // 50ms silence
-            ws.send(silenceBuffer);
-            await new Promise(resolve => setTimeout(resolve, 100));
-            ws.send("AUDIO_STREAM_END");
-        }
+        // Đợi tất cả các đoạn văn bản được xử lý
+        await Promise.all(processingPromises);
+        allChunksProcessed = true;
+        
+        // Kích hoạt lần cuối để đảm bảo tất cả âm thanh được gửi và stream được kết thúc
+        processAudioQueue();
 
     } catch (error) {
         console.error("Lỗi gửi phản hồi TTS:", error);
