@@ -20,7 +20,7 @@ const char *websockets_path = "/";
 
 String ssid;                         // SSID của mạng WiFi, cấu hình từ Web Server, lưu trong bộ nhớ flash
 String password;                     // Password của mạng WiFi, cấu hình từ Web Server, lưu trong bộ nhớ flash
-const char *apSSID = "ESP32_Config"; // Tên mạng WiFi Access Point (AP) khi không kết nối được WiFi, tên mạng là ESP32_Config
+const char *apSSID = "Flash Bot";    // Tên mạng WiFi Access Point (AP) khi không kết nối được WiFi, tên mạng là ESP32_Config
 const byte DNS_PORT = 53;            // Cổng DNS, mặc định là 53, cổng này sẽ được sử dụng để tạo DNS server cho ESP32 khi ở chế độ Access Point (AP)
 
 WebServer server(80); // Khởi tạo WebServer trên cổng 80, cổng này sẽ được sử dụng để tạo web server cho ESP32, cổng này sẽ được sử dụng để nhận thông tin cấu hình từ người dùng
@@ -43,7 +43,7 @@ bool wifiConnected = false;
 #define MIC_CHANNEL_FMT I2S_CHANNEL_FMT_ONLY_LEFT        // Chỉ sử dụng kênh trái cho mic INMP441
 #define I2S_BUFFER_COUNT 8                               // Số lượng buffer DMA (Direct Memory Access) cho I2S, DMA là vùng bộ nhớ trung gian để lưu dữ liệu được truyền/nhận giữa thiết bị ngoại vi (như mic/loa) và RAM, mà không cần CPU can thiệp trực tiếp
 
-#define RECORD_DURATION_MS 5000 // Thời gian ghi âm, cố định 5s, sẽ nâng cấp sau
+#define RECORD_DURATION_MS 3000 // Thời gian ghi âm, cố định 5s, sẽ nâng cấp sau
 
 #define PIN_BUTTON 4            // Chân nút nhấn ghi âm
 #define LED_RECORD 17           // LED báo đang ghi âm
@@ -80,15 +80,17 @@ unsigned long resetButtonPressStartTime = 0; // Thời gian bắt đầu nhấn 
 #define RESET_BUTTON_HOLD_TIME 2000          // Thời gian nhấn nút reset WiFi (2s)
 
 unsigned long lastFrameTime = 0;
-int speakFrameIndex = 0;
-int listenFrameIndex = 0;
+uint8_t speakFrameIndex = 0;
+uint8_t listenFrameIndex = 0;
+uint8_t idleFrameIndex = 0;
 bool isSpeaking = false;
 bool isListening = false;
 
 uint8_t eyeSpeak[15] = {1, 1, 1, 1, 1, 1, 2, 3, 4, 5, 4, 3, 1, 1, 1};
 uint8_t mouthSpeak[15] = {8, 9, 10, 9, 11, 9, 10, 8, 9, 10, 9, 11, 9, 8, 10};
 uint8_t eyeListen[15] = {1, 2, 3, 4, 5, 4, 3, 2, 1, 6, 7, 6, 7, 6, 7};
-uint8_t markListen[15] = {0, 0, 0, 0, 12, 13, 14, 15, 16, 15, 14, 13, 12, 13, 14};
+uint8_t markListen[15] = {12, 13, 14, 13, 12, 13, 14, 15, 16, 15, 14, 13, 12, 13, 14};
+uint8_t eyeIdle[22] = {1, 1, 1, 1, 1, 1, 2, 3, 4, 5, 4, 3, 2, 1, 1, 1, 6, 6, 7, 7, 6, 6};
 
 // Biến để theo dõi chế độ I2S hiện tại
 // Mic sử dụng 32-bit, Speaker sử dụng 16-bit => không dùng chung được 1 lần khởi tạo I2S
@@ -546,7 +548,6 @@ void webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
   case WStype_TEXT:                                         // Nhận dữ liệu dạng văn bản (lệnh) từ WebSocket
     if (strcmp((char *)payload, "AUDIO_STREAM_START") == 0) // Lệnh báo bắt đàu phát âm thanh
     {
-      isSpeaking = true;
       speakFrameIndex = 0;
       lastFrameTime = millis();
       digitalWrite(LED_PLAY, HIGH);
@@ -1056,7 +1057,6 @@ void playAudioTask(void *parameter)
   bool speaker_mode_active = false;  // Trạng thái loa đang hoạt động hay không
   unsigned long lastAudioTime = 0;   // Thời gian nhận audio gần nhất, nếu không nhận được âm thanh trong 1.5 giây thì sẽ chuyển về chế độ I2S IDLE
   unsigned long lastMemoryCheck = 0; // Thời gian kiểm tra bộ nhớ gần nhất, để quản lý bộ nhớ
-  isSpeaking = true;
 
   while (true)
   {
@@ -1127,7 +1127,7 @@ void playAudioTask(void *parameter)
           switch_i2s_mode(I2S_MODE_IDLE);
           digitalWrite(SPEAKER_SD_PIN, LOW); // Tắt loa
           speaker_mode_active = false;       // Đặt lại trạng thái loa
-          // isSpeaking = false;
+          isSpeaking = false;
 
           delay(100);
         }
@@ -1136,6 +1136,7 @@ void playAudioTask(void *parameter)
 
     if (xQueueReceive(playAudioQueue, &chunk, pdMS_TO_TICKS(1000)) == pdPASS)
     {
+      isSpeaking = true;
       // Có âm thanh cần phát - Cập nhật thời gian nhận audio gần nhất
       lastAudioTime = millis();
 
@@ -1195,7 +1196,7 @@ void playAudioTask(void *parameter)
       // Không có dữ liệu nhận được trong 1 giây
       // Nếu đang ở chế độ speaker và đã 1.5 giây không nhận được âm thanh mới,
       // thì chuyển về trạng thái ban đầu để sẵn sàng cho ghi âm tiếp
-      if (speaker_mode_active && (millis() - lastAudioTime > 1500))
+      if (speaker_mode_active && (millis() - lastAudioTime > 1000))
       {
         speaker_mode_active = false;
         // Tắt loa và về trạng thái NONE để sẵn sàng ghi âm tiếp
@@ -1203,7 +1204,7 @@ void playAudioTask(void *parameter)
         digitalWrite(SPEAKER_SD_PIN, LOW); // Tắt loa
         // Xóa queue để đảm bảo không còn dữ liệu cũ
         xQueueReset(playAudioQueue);
-        // isSpeaking = false;
+        isSpeaking = false;
       }
     }
   }
@@ -1227,7 +1228,7 @@ void updateDisplaySpeak()
     return;
 
   unsigned long now = millis();
-  if (now - lastFrameTime >= 100)
+  if (now - lastFrameTime >= 200)
   {
     lastFrameTime = now;
 
@@ -1243,21 +1244,37 @@ void updateDisplaySpeak()
   }
 }
 
+void updateDisplayIdle() {
+  if (isSpeaking || isListening) {
+    return;
+  }
+
+  unsigned long now = millis();
+  if (now - lastFrameTime >= 200)
+  {
+    lastFrameTime = now;
+    // tft.fillScreen(TFT_BLACK);
+    tft.pushImage(20, 60, 90, 90, myBitmapArray[eyeIdle[idleFrameIndex] - 1]);
+    tft.pushImage(125, 60, 90, 90, myBitmapArray[eyeIdle[idleFrameIndex] - 1]);
+    idleFrameIndex++;
+    if (idleFrameIndex >= 22)
+    {
+      idleFrameIndex = 0;
+    }
+  }
+}
+
 void updateDisplayListen()
 {
   if (!isListening)
     return;
 
   unsigned long now = millis();
-  if (now - lastFrameTime >= 100)
+  if (now - lastFrameTime >= 200)
   {
     lastFrameTime = now;
 
-    if (listenFrameIndex >= 4)
-    {
-      tft.pushImage(165, 0, 60, 60, myBitmapArray[markListen[listenFrameIndex] - 1]);
-    }
-
+    tft.pushImage(165, 0, 60, 60, myBitmapArray[markListen[listenFrameIndex] - 1]);
     tft.pushImage(20, 60, 90, 90, myBitmapArray[eyeListen[listenFrameIndex] - 1]);
     tft.pushImage(125, 60, 90, 90, myBitmapArray[eyeListen[listenFrameIndex] - 1]);
 
@@ -1394,6 +1411,7 @@ void loop()
 {
   updateDisplaySpeak();
   updateDisplayListen();
+  updateDisplayIdle();
   
   while (!wifiConnected)
   {
