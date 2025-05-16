@@ -18,10 +18,10 @@ String websockets_server_host; // Cấu hình từ Web Server
 const uint16_t websockets_server_port = 8080;
 const char *websockets_path = "/";
 
-String ssid;                         // SSID của mạng WiFi, cấu hình từ Web Server, lưu trong bộ nhớ flash
-String password;                     // Password của mạng WiFi, cấu hình từ Web Server, lưu trong bộ nhớ flash
-const char *apSSID = "Flash Bot";    // Tên mạng WiFi Access Point (AP) khi không kết nối được WiFi, tên mạng là ESP32_Config
-const byte DNS_PORT = 53;            // Cổng DNS, mặc định là 53, cổng này sẽ được sử dụng để tạo DNS server cho ESP32 khi ở chế độ Access Point (AP)
+String ssid;                      // SSID của mạng WiFi, cấu hình từ Web Server, lưu trong bộ nhớ flash
+String password;                  // Password của mạng WiFi, cấu hình từ Web Server, lưu trong bộ nhớ flash
+const char *apSSID = "Flash Bot"; // Tên mạng WiFi Access Point (AP) khi không kết nối được WiFi, tên mạng là ESP32_Config
+const byte DNS_PORT = 53;         // Cổng DNS, mặc định là 53, cổng này sẽ được sử dụng để tạo DNS server cho ESP32 khi ở chế độ Access Point (AP)
 
 WebServer server(80); // Khởi tạo WebServer trên cổng 80, cổng này sẽ được sử dụng để tạo web server cho ESP32, cổng này sẽ được sử dụng để nhận thông tin cấu hình từ người dùng
 DNSServer dns;        // Đối tượng dns để tạo DNS server cho ESP32, cổng này sẽ được sử dụng để chuyển hướng tất cả các request lạ về trang cấu hình của ESP32
@@ -43,9 +43,9 @@ bool wifiConnected = false;
 #define MIC_CHANNEL_FMT I2S_CHANNEL_FMT_ONLY_LEFT        // Chỉ sử dụng kênh trái cho mic INMP441
 #define I2S_BUFFER_COUNT 8                               // Số lượng buffer DMA (Direct Memory Access) cho I2S, DMA là vùng bộ nhớ trung gian để lưu dữ liệu được truyền/nhận giữa thiết bị ngoại vi (như mic/loa) và RAM, mà không cần CPU can thiệp trực tiếp
 
-#define RECORD_DURATION_MS 3000 // Thời gian ghi âm, cố định 5s, sẽ nâng cấp sau
+#define RECORD_DURATION_MS 3500 // Thời gian ghi âm, cố định 5s, sẽ nâng cấp sau
 
-#define PIN_BUTTON 4            // Chân nút nhấn ghi âm
+#define PIN_TOUCH 4             // Chân nút nhấn ghi âm
 #define LED_RECORD 17           // LED báo đang ghi âm
 #define LED_PLAY 16             // LED báo đang phát
 #define PIN_RESET_WIFI_BUTTON 5 // Chân nút nhấn reset WiFi
@@ -67,6 +67,13 @@ typedef enum
   I2S_MODE_SPEAKER
 } current_i2s_mode_t;
 
+typedef enum
+{
+  BUTTON_NONE,
+  BUTTON_PRESSED,
+  BUTTON_HELD
+} button_state_t;
+
 bool buttonPressed = false;      // Biến để theo dõi trạng thái nút nhấn
 bool resetButtonPressed = false; // Biến để theo dõi trạng thái nút nhấn reset WiFi
 // Khi nhấn nút thì tín hiệu sẽ không chuyển từ Low -> High luôn mà sẽ thay đổi trạng thái từ Low -> High -> Low -> High -> Low
@@ -77,20 +84,23 @@ unsigned long lastButtonChangeTime = 0;      // Thời gian thay đổi trạng 
 unsigned long lastResetButtonChangeTime = 0; // Thời gian thay đổi trạng thái nút nhấn reset WiFi, tính toán chống dội
 unsigned long resetButtonPressStartTime = 0; // Thời gian bắt đầu nhấn nút reset WiFi, dùng để kiểm tra thời gian nhấn nút
 #define DEBOUNCE_TIME 50                     // Thời gian chống dội (50ms)
-#define RESET_BUTTON_HOLD_TIME 2000          // Thời gian nhấn nút reset WiFi (2s)
+#define RESET_HOLD_TIME 2000                 // Thời gian nhấn nút reset WiFi (2s)
 
 unsigned long lastFrameTime = 0;
 uint8_t speakFrameIndex = 0;
 uint8_t listenFrameIndex = 0;
 uint8_t idleFrameIndex = 0;
+uint8_t thinkFrameIndex = 0;
 bool isSpeaking = false;
 bool isListening = false;
+bool isThinking = false;
 
 uint8_t eyeSpeak[15] = {1, 1, 1, 1, 1, 1, 2, 3, 4, 5, 4, 3, 1, 1, 1};
 uint8_t mouthSpeak[15] = {8, 9, 10, 9, 11, 9, 10, 8, 9, 10, 9, 11, 9, 8, 10};
 uint8_t eyeListen[15] = {1, 2, 3, 4, 5, 4, 3, 2, 1, 6, 7, 6, 7, 6, 7};
 uint8_t markListen[15] = {12, 13, 14, 13, 12, 13, 14, 15, 16, 15, 14, 13, 12, 13, 14};
 uint8_t eyeIdle[22] = {1, 1, 1, 1, 1, 1, 2, 3, 4, 5, 4, 3, 2, 1, 1, 1, 6, 6, 7, 7, 6, 6};
+uint8_t markThink[15] = {17, 18, 19, 20, 21, 22, 21, 20, 19, 18, 17, 18, 19, 20, 21};
 
 // Biến để theo dõi chế độ I2S hiện tại
 // Mic sử dụng 32-bit, Speaker sử dụng 16-bit => không dùng chung được 1 lần khởi tạo I2S
@@ -1019,6 +1029,8 @@ void recordAndSendTask(void *parameter)
   }
 
   isListening = false;
+  isRecording = false;
+  isThinking = true;
   tft.fillScreen(TFT_BLACK);
 
 cleanup:
@@ -1057,7 +1069,7 @@ void playAudioTask(void *parameter)
   bool speaker_mode_active = false;  // Trạng thái loa đang hoạt động hay không
   unsigned long lastAudioTime = 0;   // Thời gian nhận audio gần nhất, nếu không nhận được âm thanh trong 1.5 giây thì sẽ chuyển về chế độ I2S IDLE
   unsigned long lastMemoryCheck = 0; // Thời gian kiểm tra bộ nhớ gần nhất, để quản lý bộ nhớ
-
+  
   while (true)
   {
     // Kiểm tra trạng thái bộ nhớ mỗi 2 giây
@@ -1137,6 +1149,8 @@ void playAudioTask(void *parameter)
     if (xQueueReceive(playAudioQueue, &chunk, pdMS_TO_TICKS(1000)) == pdPASS)
     {
       isSpeaking = true;
+      isThinking = false;
+      isListening = false;
       // Có âm thanh cần phát - Cập nhật thời gian nhận audio gần nhất
       lastAudioTime = millis();
 
@@ -1224,14 +1238,15 @@ void initializeWebSocket()
 
 void updateDisplaySpeak()
 {
-  if (!isSpeaking)
+  if (!isSpeaking || isListening)
     return;
 
   unsigned long now = millis();
-  if (now - lastFrameTime >= 200)
+  if (now - lastFrameTime >= 150)
   {
     lastFrameTime = now;
 
+    tft.fillRect(165, 0, 60, 60, TFT_BLACK);
     tft.pushImage(20, 60, 90, 90, myBitmapArray[eyeSpeak[speakFrameIndex] - 1]);
     tft.pushImage(125, 60, 90, 90, myBitmapArray[eyeSpeak[speakFrameIndex] - 1]);
     tft.pushImage(80, 150, 80, 80, myBitmapArray[mouthSpeak[speakFrameIndex] - 1]);
@@ -1244,18 +1259,21 @@ void updateDisplaySpeak()
   }
 }
 
-void updateDisplayIdle() {
-  if (isSpeaking || isListening) {
+void updateDisplayIdle()
+{
+  if (isSpeaking || isListening || isThinking)
+  {
     return;
   }
 
   unsigned long now = millis();
-  if (now - lastFrameTime >= 200)
+  if (now - lastFrameTime >= 150)
   {
     lastFrameTime = now;
     // tft.fillScreen(TFT_BLACK);
     tft.pushImage(20, 60, 90, 90, myBitmapArray[eyeIdle[idleFrameIndex] - 1]);
     tft.pushImage(125, 60, 90, 90, myBitmapArray[eyeIdle[idleFrameIndex] - 1]);
+    tft.fillRect(80, 150, 80, 80, TFT_BLACK);
     idleFrameIndex++;
     if (idleFrameIndex >= 22)
     {
@@ -1266,11 +1284,11 @@ void updateDisplayIdle() {
 
 void updateDisplayListen()
 {
-  if (!isListening)
+  if (!isListening || isSpeaking)
     return;
 
   unsigned long now = millis();
-  if (now - lastFrameTime >= 200)
+  if (now - lastFrameTime >= 150)
   {
     lastFrameTime = now;
 
@@ -1284,6 +1302,56 @@ void updateDisplayListen()
       listenFrameIndex = 0;
     }
   }
+}
+
+void updateDisplayThinking()
+{
+  if (!isThinking || isSpeaking || isListening)
+    return;
+
+  unsigned long now = millis();
+  if (now - lastFrameTime >= 150)
+  {
+    lastFrameTime = now;
+
+    tft.pushImage(165, 0, 60, 60, myBitmapArray[markThink[thinkFrameIndex] - 1]);
+    tft.pushImage(20, 60, 90, 90, myBitmapArray[eyeListen[thinkFrameIndex] - 1]);
+    tft.pushImage(125, 60, 90, 90, myBitmapArray[eyeListen[thinkFrameIndex] - 1]);
+
+    thinkFrameIndex++;
+    if (thinkFrameIndex >= 15)
+    {
+      thinkFrameIndex = 0;
+    }
+  }
+}
+
+button_state_t handleButton(bool &buttonState, unsigned long &lastChangeTime, unsigned long &pressStartTime)
+{
+
+  bool currentState = digitalRead(PIN_TOUCH) == LOW; // LOW là đang nhấn
+  unsigned long now = millis();
+
+  if ((now - lastChangeTime > DEBOUNCE_TIME) && !isRecording && !isSpeaking && !isThinking)
+  {
+    // Xử lý khi nhấn nút
+    if (currentState && !buttonState)
+    {
+      buttonState = true;
+      pressStartTime = now;
+      lastChangeTime = now;
+      return BUTTON_PRESSED;
+    }
+  }
+
+  // Xử lý khi thả nút
+  if (!currentState && buttonState)
+  {
+    buttonState = false;
+    lastChangeTime = now;
+  }
+
+  return BUTTON_NONE;
 }
 
 /**
@@ -1346,9 +1414,8 @@ void setup()
     startAP(); // Chuyển sang chế độ AP nếu không có thông tin WiFi
   }
 
-  // Cấu hình chân nút nhấn
-  pinMode(PIN_BUTTON, INPUT_PULLUP);            // để ở pullup vì nút nhấn nối đất, mặc định khi không nhấn là HIGH
   pinMode(PIN_RESET_WIFI_BUTTON, INPUT_PULLUP); // để ở pullup vì nút nhấn nối đất, mặc định khi không nhấn là HIGH
+  pinMode(PIN_TOUCH, INPUT_PULLUP);
 
   // Cấu hình các chân LED
   pinMode(LED_RECORD, OUTPUT);
@@ -1412,7 +1479,8 @@ void loop()
   updateDisplaySpeak();
   updateDisplayListen();
   updateDisplayIdle();
-  
+  updateDisplayThinking();
+
   while (!wifiConnected)
   {
     /**
@@ -1429,93 +1497,59 @@ void loop()
 
   webSocket.loop();
 
-  // Kiểm tra trạng thái nút nhấn với chống dội
-  bool currentButtonState = digitalRead(PIN_BUTTON) == LOW; // LOW khi nhấn (pull-up)
-  currentTime = millis();                                   // Biến theo dõi thời gian hiện tại
+  currentTime = millis(); // Biến theo dõi thời gian hiện tại
 
-  // Xử lý thay đổi trạng thái nút nhấn với chống dội
-  if (currentTime - lastButtonChangeTime > DEBOUNCE_TIME)
+  button_state_t buttonState = handleButton(buttonPressed, lastButtonChangeTime, currentTime);
+
+  if (buttonState == BUTTON_PRESSED && !isRecording && !isSpeaking && webSocket.isConnected())
   {
-    // Phát hiện nhấn nút - bắt đầu ghi âm 5 giây
-    if (currentButtonState && !buttonPressed && !isRecording && webSocket.isConnected())
+    buttonPressed = true;
+    lastButtonChangeTime = currentTime;
+
+    // Đảm bảo không có chế độ I2S nào đang hoạt động trước khi bắt đầu ghi âm
+    if (current_i2s_mode != I2S_MODE_IDLE)
     {
-      buttonPressed = true;
-      lastButtonChangeTime = currentTime;
-
-      // Đảm bảo không có chế độ I2S nào đang hoạt động trước khi bắt đầu ghi âm
-      if (current_i2s_mode != I2S_MODE_IDLE)
-      {
-        switch_i2s_mode(I2S_MODE_IDLE);
-        delay(100); // Cho phép hệ thống ổn định
-      }
-
-      Serial.println("Button pressed. Starting recording for 5 seconds...");
-      isRecording = true;
-
-      // Nếu task ghi âm chưa được tạo, tạo task mới
-      if (recordTaskHandle == NULL)
-      {
-        // Chip ESP32 đa nhân, Sử dụng hàm này để tạo 1 task và ghim nó vào core 1, tránh trường hợp xung đột với các task khác
-        // Hàm trong thư viện FreeRTOS, là một thư viện hệ điều hành thời gian thực cho ESP32, có thể tạo nhiều task chạy song song
-        xTaskCreatePinnedToCore(
-            recordAndSendTask,
-            "RecordSendTask",
-            8192, // Kích thước stack cho task (8192 bytes) 8KB
-            NULL,
-            10, // Mức độ ưu tiên của task (10 là mức độ ưu tiên cao hơn)
-            &recordTaskHandle,
-            1); // Khởi tạo task tại core 1
-        if (recordTaskHandle == NULL)
-        {
-          Serial.println("Failed to create recording task!");
-          isRecording = false;
-        }
-      }
+      switch_i2s_mode(I2S_MODE_IDLE);
+      delay(100); // Cho phép hệ thống ổn định
     }
 
-    // Đặt lại trạng thái nút khi thả
-    if (!currentButtonState && buttonPressed)
+    Serial.println("Button pressed. Starting recording for 5 seconds...");
+    isRecording = true;
+
+    // Nếu task ghi âm chưa được tạo, tạo task mới
+    if (recordTaskHandle == NULL)
     {
-      buttonPressed = false;
-      lastButtonChangeTime = currentTime;
+      // Chip ESP32 đa nhân, Sử dụng hàm này để tạo 1 task và ghim nó vào core 1, tránh trường hợp xung đột với các task khác
+      // Hàm trong thư viện FreeRTOS, là một thư viện hệ điều hành thời gian thực cho ESP32, có thể tạo nhiều task chạy song song
+      xTaskCreatePinnedToCore(
+          recordAndSendTask,
+          "RecordSendTask",
+          8192, // Kích thước stack cho task (8192 bytes) 8KB
+          NULL,
+          10, // Mức độ ưu tiên của task (10 là mức độ ưu tiên cao hơn)
+          &recordTaskHandle,
+          1); // Khởi tạo task tại core 1
+      if (recordTaskHandle == NULL)
+      {
+        Serial.println("Failed to create recording task!");
+        isRecording = false;
+      }
     }
   }
 
-  bool currentResetButtonState = digitalRead(PIN_RESET_WIFI_BUTTON) == LOW; // LOW khi nhấn (pull-up)
-  currentTime = millis();
-  // Kiểm tra nút nhấn reset WiFi
-  if (currentTime - lastResetButtonChangeTime > DEBOUNCE_TIME)
+  if (buttonState == BUTTON_HELD)
   {
-    if (currentResetButtonState && !resetButtonPressed) // Nếu nhấn nút reset Config và chưa nhấn trước đó
+    // Nháy đèn LED để báo hiệu đang reset WiFi
+    for (int i = 0; i < 10; i++)
     {
-      resetButtonPressed = true;               // Đánh dấu nút đã được nhấn, để đo thời gian nhấn
-      resetButtonPressStartTime = currentTime; // Bắt đầu tính thời gian nhấn nút
-      lastResetButtonChangeTime = currentTime; // Cập nhật thời gian thay đổi trạng thái nút nhấn, để chống dội
+      digitalWrite(LED_RECORD, HIGH);
+      digitalWrite(LED_PLAY, HIGH);
+      delay(100);
+      digitalWrite(LED_RECORD, LOW);
+      digitalWrite(LED_PLAY, LOW);
+      delay(100);
     }
 
-    // Nếu giữ nút nhấn quá thời gian quy định, thực hiện reset Config
-    if (currentResetButtonState && resetButtonPressed &&
-        (currentTime - resetButtonPressStartTime >= RESET_BUTTON_HOLD_TIME))
-    {
-
-      // Nháy đèn LED để báo hiệu đang reset WiFi
-      for (int i = 0; i < 10; i++)
-      {
-        digitalWrite(LED_RECORD, HIGH);
-        digitalWrite(LED_PLAY, HIGH);
-        delay(100);
-        digitalWrite(LED_RECORD, LOW);
-        digitalWrite(LED_PLAY, LOW);
-        delay(100);
-      }
-
-      resetWiFiSettings(); // Hàm này sẽ xóa thông tin Config trong Preferences và khởi động lại ESP32
-    }
-    // Nếu thả nút nhấn, đặt lại trạng thái nút nhấn
-    if (!currentResetButtonState && resetButtonPressed)
-    {
-      resetButtonPressed = false;
-      lastResetButtonChangeTime = currentTime;
-    }
+    resetWiFiSettings(); // Hàm này sẽ xóa thông tin Config trong Preferences và khởi động lại ESP32
   }
 }
