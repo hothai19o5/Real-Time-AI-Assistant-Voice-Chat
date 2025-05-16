@@ -46,11 +46,11 @@ const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 const initialAssistantHistory = [
     {
         role: "user",
-        parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời trong vòng tối đa khoảng 500 chữ. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt. Các câu trả lời không nên có các emoji hay kí tự đặc biệt. Câu trả lời chỉ có ngắt câu bằng dấu chấm và dấu phẩy, không dùng các dấu như **, *,... Câu trả lời chỉ cần diễn đạt trên 1 dòng dài, không cần các ký tự xuống dòng." }],
+        parts: [{ text: "Xin chào, từ bây giờ bạn sẽ là trợ lý ảo AI của tôi. Tôi sẽ gửi các câu hỏi cho bạn và bạn sẽ trả lời. Trả lời tôi bằng tiếng việt, nếu có các từ bằng bắt buộc bằng tiếng anh thì hãy trả lời theo cách phát âm tiếng việt. Các câu trả lời không nên có các emoji hay kí tự đặc biệt. Câu trả lời chỉ có ngắt câu bằng dấu chấm và dấu phẩy, không dùng các dấu như **, *,... Câu trả lời chỉ cần diễn đạt trên 1 dòng dài, không cần các ký tự xuống dòng. Mỗi câu chỉ nên có khoảng 10 từ sau đó kết thúc bằng dấu chấm câu. Và hãy trả lời sao cho câu đầu tiên trong đoạn chỉ có dưới 10 từ." }],
     },
     {
         role: "model",
-        parts: [{ text: "Chào bạn! Tôi là một mô hình ngôn ngữ lớn, được đào tạo bởi Google. Tôi ở đây để giúp bạn với thông tin và các tác vụ dựa trên văn bản. Bạn có thể coi tôi là trợ lý AI ảo của bạn." }],
+        parts: [{ text: "Chào bạn, rất vui được gặp bạn. Tôi là một mô hình ngôn ngữ lớn, được đào tạo bởi Google. Tôi ở đây để giúp bạn với thông tin và các tác vụ dựa trên văn bản. Bạn có thể coi tôi là trợ lý AI ảo của bạn." }],
     },
     // {
     //   role: "user",
@@ -554,6 +554,44 @@ async function handleLunarDateCommnad(ws) {
 // }
 
 function splitTextToChunks(text) {
+    // const chunks = [];
+    // const sentences = text.split(/(?<=[.?!])\s+/); // Tách theo dấu kết thúc câu
+
+    // // let isFirstChunk = true;
+
+    // for (let sentence of sentences) {
+    //     sentence = sentence.trim();
+    //     if (!sentence) continue;
+
+    //     const words = sentence.split(/\s+/);
+
+    //     // // Nếu là chunk đầu tiên và số từ > 6, cắt nhỏ thành chunk 5-6 từ
+    //     // if (isFirstChunk && words.length > 6) {
+    //     //     for (let i = 0; i < words.length; i += 6) {
+    //     //         const chunkWords = words.slice(i, i + 6);
+    //     //         chunks.push(chunkWords.join(' '));
+    //     //         isFirstChunk = false; // Sau lần đầu thì không xử lý theo kiểu đặc biệt nữa
+    //     //     }
+    //     // }
+    //     // // Nếu là câu dài (>20 từ) và có dấu phẩy, tách theo dấu phẩy
+    //     // else if (words.length > 20 && sentence.includes(',')) {
+    //     //     const subChunks = sentence.split(/,\s*/);
+    //     //     for (let sub of subChunks) {
+    //     //         if (sub.trim().length > 0) {
+    //     //             chunks.push(sub.trim());
+    //     //         }
+    //     //     }
+    //     //     isFirstChunk = false;
+    //     // }
+    //     // // Ngược lại, cứ thêm nguyên câu
+    //     // else {
+    //     //     chunks.push(sentence);
+    //     //     isFirstChunk = false;
+    //     // }
+    // }
+
+    // return chunks;
+
     const sentences = text.split(/(?<=[.?!])\s+/); // tách theo dấu kết thúc câu
     const chunks = [];
 
@@ -652,9 +690,6 @@ async function sendTTSResponse(text, ws) {
     const textChunks = splitTextToChunks(text, 10); // Tách văn bản thành các đoạn nhỏ
     console.log(`Đã tách văn bản thành ${textChunks.length} đoạn để xử lý TTS`);
 
-    // Thời điểm bắt đầu xử lý TTS
-    const ttsStartTime = Date.now();
-
     try {
         // Gửi thông báo bắt đầu stream
         ws.send("AUDIO_STREAM_START");
@@ -700,11 +735,6 @@ async function sendTTSResponse(text, ws) {
                 ws.send(silenceBuffer);
                 await new Promise(resolve => setTimeout(resolve, 100));
                 ws.send("AUDIO_STREAM_END");
-                
-                // Thời điểm kết thúc xử lý TTS
-                const ttsEndTime = Date.now();
-                const ttsProcessingTime = ttsEndTime - ttsStartTime;
-                console.log(`TTS xử lý xong trong ${ttsProcessingTime} ms`);
             }
         };
 
@@ -716,8 +746,8 @@ async function sendTTSResponse(text, ws) {
                 const response = await axios.post('http://localhost:5001/tts', {
                     text: chunk,
                     voice: 'vi-VN-HoaiMyNeural',
-                    rate: "+15%",
-                    volume: "-70%"
+                    rate: "+10%",
+                    volume: "+0%"
                 }, {
                     responseType: 'arraybuffer',
                     timeout: 15000 // 15 giây timeout
@@ -963,7 +993,7 @@ async function callElevenLabsSpeechToText(audioBuffer, ws, timeoutMs = 30000) {
         });
 
         const response = await axios.post(
-            'http://localhost:5002/stt',  // server python chạy ở localhost:5002, path /stt
+            'http://localhost:5001/stt',  // server python chạy ở localhost:5002, path /stt
             formData,
             {
                 headers: {
@@ -980,9 +1010,6 @@ async function callElevenLabsSpeechToText(audioBuffer, ws, timeoutMs = 30000) {
             };
         } else {
             console.log(`ElevenLabs STT lỗi: ${response.data.error}`);
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                playSoundFile('./sound/stt_timeout.wav', ws);
-            }
             return {
                 success: false,
                 error: response.data.error
@@ -990,10 +1017,6 @@ async function callElevenLabsSpeechToText(audioBuffer, ws, timeoutMs = 30000) {
         }
     } catch (error) {
         console.error('Lỗi khi gọi ElevenLabs STT Server:', error.message || error);
-
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            playSoundFile('./sound/stt_timeout.wav', ws);
-        }
 
         if (error.code === 'ECONNABORTED') {
             return {
@@ -1306,14 +1329,13 @@ wss.on('connection', (ws) => {
                                 const result = await chat.sendMessage(recognizedText);
                                 const response = result.response;
                                 let geminiText = response.text();
-                                console.log(`Raw Gemini Response: "${geminiText}"`);
 
                                 // Clean markdown formatting before sending to TTS
                                 geminiText = cleanMarkdownFormatting(geminiText);
+                                console.log(`Gemini Response Clean Markdown: "${geminiText}"`);
 
                                 // Continue with existing TTS logic...
                                 if (ws.readyState === WebSocket.OPEN) {
-                                    // await sendTTSResponse("oke i'm ready to respone you", ws);
                                     await sendTTSResponse(geminiText, ws);
                                     console.log("Sent Gemini response and audio back to client.");
                                 } else {
@@ -1321,6 +1343,7 @@ wss.on('connection', (ws) => {
                                 }
                             } catch (error) {
                                 console.error("Error calling Gemini API:", error);
+                                playSoundFile('./sound/geminiOverload.wav', ws); // Phát âm thanh lỗi
                                 if (ws.readyState === WebSocket.OPEN) {
                                     ws.send(`Error processing request: ${error.message || 'Gemini API error'}`);
                                 }
@@ -1329,6 +1352,8 @@ wss.on('connection', (ws) => {
                     } else {
                         console.log("Empty transcription or error from STT service");
                         if (ws.readyState === WebSocket.OPEN) {
+                            // delay 0.5 giây trước khi phát âm thanh lỗi
+                            await new Promise(resolve => setTimeout(resolve, 600));
                             playSoundFile('./sound/xin_loi_toi_khong_nghe_ro_vui_long_thu_lai.wav', ws);
                         }
                     }
