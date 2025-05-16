@@ -14,7 +14,7 @@
 
 - **ESP32** (thu & phát âm thanh)
 - **WebSocket** (giao tiếp thời gian thực)
-- **PhoWhisper** (speech-to-text) || **FPT** API (speech to text) || **ElevenLabs** API (speech to text)
+- **PhoWhisper** (speech-to-text) || **ElevenLabs API** (speech to text)
 - **Gemini** (AI chatbot)
 - **Edge TTS**
 
@@ -31,7 +31,7 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 - Phát bài nhạc cụ thể
 - Xem lịch dương/ âm
 - Màn hình hiển thị cảm xúc
-- Màn hình hiển thị ngày giờ, địa điểm, thời tiết (sẽ cập nhật)
+- Màn hình hiển thị ngày giờ, địa điểm, thời tiết
 
 
 ## Kiến trúc hệ thống
@@ -45,11 +45,11 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
 ### Server (Node.js)
 - Nhận dữ liệu âm thanh từ **ESP32** qua WebSocket
 - Chuyển giọng nói thành văn bản bằng **PhoWhisper** STT chạy local, yêu cầu máy mạnh.
-- Chuyển giọng nói thành văn bản bằng **ElevenLabs** API STT, **rất nhanh**.
+- Chuyển giọng nói thành văn bản bằng **ElevenLabs API STT**, **rất nhanh**.
 - Nhận dạng đó là lệnh hay là câu hỏi
 - Nếu là các lệnh Hỏi giờ, Xem thời tiết, Phát nhạc, Xem ngày dương/ âm lịch thì Server sẽ xử lý tương ứng
 - Gửi câu hỏi text tới **Gemini** (Google AI) để nhận phản hồi text
-- Chuyển phản hồi text thành giọng nói với **Edge TTS** (Cần sửa lại để tối ưu thời gian phản hồi)
+- Chuyển phản hồi text thành giọng nói với **Edge TTS** (Text cần chia thành các đoạn nhỏ để giảm thời gian chờ phản hồi)
 - Gửi lại âm thanh về **ESP32** để phát ra loa
 
 
@@ -161,8 +161,12 @@ Kết nối phần cứng:
   
 - **Button**
   
-      Recording        -     D17
-      Reset Config     -     D16
+      Recording        -     D4
+      Reset Config     -     D5
 
+- **LED**
+
+      Recording   -     D17
+      Speaking    -     D16
 
 **Đang cập nhật...**
