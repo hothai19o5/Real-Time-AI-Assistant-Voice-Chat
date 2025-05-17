@@ -169,4 +169,7 @@ Kết nối phần cứng:
       Recording   -     D17
       Speaking    -     D16
 
-**Đang cập nhật...**
+**Video Demo**
+
+https://github.com/user-attachments/assets/416aacca-bc9a-4e1b-aeec-ddad731e1f73
+
