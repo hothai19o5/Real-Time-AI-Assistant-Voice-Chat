@@ -62,9 +62,7 @@ Toàn bộ quá trình diễn ra hoàn toàn **real-time**.
     │   ├── package.json
     │   ├── music/                      # Music files
     │   ├── sound/                      # Notification sound
-    │   ├── sound_debug/                # Sound Record and Sound TTS
-    │   ├── edge_tts_server.py          # Sever python handler Edge TTS
-    │   ├── elevenlabs_stt_server.py    # Sever python handler ElevenLabs STT
+    │   ├── server.py                   # Sever python
     │   └── server.js                   # WebSocket server
     ├── phowhisper_service/
     │   ├── models/                     # Speech-to-Text model
@@ -103,17 +101,7 @@ Chạy server:
 ```bash
 cd .\serverNodeJsAi\
 node .\server.js
-python .\edge_tts_server.py
-```
-
-```bash
-cd .\serverNodeJsAi\
-python .\elevenlabs_stt_server.py
-```
-
-```bash
-cd .\serverNodeJsAi\
-python .\edge_tts_server.py
+python .\server.py
 ```
 
 ### ESP32
